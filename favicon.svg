@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <rect width="32" height="32" rx="8" fill="#1a1d27"/>
+  <!-- Scissors body -->
+  <g stroke="#5b6af0" stroke-width="2.2" stroke-linecap="round" fill="none">
+    <!-- Left blade -->
+    <path d="M7 7 L20 20"/>
+    <!-- Right blade -->
+    <path d="M25 7 L12 20"/>
+    <!-- Left handle -->
+    <circle cx="7" cy="7" r="3" fill="#5b6af0" stroke="none"/>
+    <circle cx="25" cy="7" r="3" fill="#5b6af0" stroke="none"/>
+    <!-- Cut line (dashed) -->
+    <line x1="8" y1="26" x2="24" y2="26" stroke="#f9c846" stroke-width="2" stroke-dasharray="3,2"/>
+  </g>
+</svg>
