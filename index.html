@@ -465,26 +465,32 @@
 
     .segment-info { flex: 1; min-width: 0; }
 
+    .segment-name-wrap {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      margin-bottom: 2px;
+    }
     .segment-name-input {
       font-size: 12px;
       font-weight: 600;
       color: var(--text);
-      background: transparent;
-      border: none;
-      border-bottom: 1px solid transparent;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
       outline: none;
       width: 100%;
-      padding: 0 0 1px;
-      margin-bottom: 2px;
+      padding: 2px 6px;
       font-family: var(--font);
       cursor: text;
-      transition: border-color 0.15s;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .segment-name-input:hover {
+      border-color: var(--text-dim);
     }
     .segment-name-input:focus {
-      border-bottom-color: var(--accent);
+      border-color: var(--accent);
       background: rgba(91,106,240,0.08);
-      border-radius: 3px 3px 0 0;
-      cursor: text;
     }
 
     .segment-times {
@@ -497,9 +503,28 @@
       font-size: 11px;
       color: var(--accent);
       font-weight: 600;
-      margin-left: auto;
       flex-shrink: 0;
     }
+
+    .segment-play-btn {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      border: none;
+      background: var(--accent);
+      color: #fff;
+      font-size: 11px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      opacity: 0.7;
+      transition: opacity 0.15s, transform 0.1s;
+      padding-left: 2px; /* optical center for ▶ */
+    }
+    .segment-play-btn:hover { opacity: 1; transform: scale(1.1); }
+    .segment-play-btn.playing { background: var(--accent2); opacity: 1; padding-left: 0; }
 
     /* Select-all row in header */
     #select-all-btn {
@@ -812,7 +837,7 @@
         <strong style="color:var(--text); display:block; margin-bottom:6px;">Keyboard shortcuts</strong>
         <kbd>Space</kbd> Play / Pause<br>
         <kbd>S</kbd> / <kbd>M</kbd> Add split point<br>
-        <kbd>←</kbd> / <kbd>→</kbd> Seek ±0.3 s<br>
+        <kbd>←</kbd> / <kbd>→</kbd> Seek ±0.1 s<br>
         <kbd>Z</kbd> Undo last split<br>
       </div>
 
@@ -860,6 +885,7 @@ let ffmpeg       = null;
 let ffmpegReady  = false;
 let isExporting  = false;
 let selectedSegments = new Set();  // indices of selected segments
+let segmentPlayEnd = null;         // end time of currently previewing segment
 let segmentNames = {};             // index → custom name
 
 // Drag state for markers
@@ -988,6 +1014,19 @@ function loadVideoFile(file) {
   document.getElementById('player-placeholder').style.display = 'none';
   videoEl.style.display = 'block';
 }
+
+// Stop segment preview at end boundary
+videoEl.addEventListener('timeupdate', () => {
+  if (segmentPlayEnd !== null && videoEl.currentTime >= segmentPlayEnd) {
+    videoEl.pause();
+    videoEl.currentTime = segmentPlayEnd;
+    segmentPlayEnd = null;
+    document.querySelectorAll('.segment-play-btn.playing').forEach(b => {
+      b.classList.remove('playing');
+      b.textContent = '▶';
+    });
+  }
+});
 
 videoEl.addEventListener('loadedmetadata', () => {
   videoDuration = videoEl.duration;
@@ -1327,7 +1366,10 @@ function renderSegments() {
     progBar.id = 'seg-prog-bar-' + i;
     progWrap.appendChild(progBar);
 
-    info.appendChild(nameInput);
+    const nameWrap = document.createElement('div');
+    nameWrap.className = 'segment-name-wrap';
+    nameWrap.appendChild(nameInput);
+    info.appendChild(nameWrap);
     info.appendChild(timesDiv);
     info.appendChild(progWrap);
 
@@ -1335,10 +1377,35 @@ function renderSegments() {
     durLabel.className = 'segment-duration';
     durLabel.textContent = formatTime(dur);
 
+    const playSegBtn = document.createElement('button');
+    playSegBtn.className = 'segment-play-btn';
+    playSegBtn.textContent = '▶';
+    playSegBtn.title = 'この区間を再生';
+    playSegBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isPlaying = playSegBtn.classList.contains('playing');
+      // Reset all play buttons
+      document.querySelectorAll('.segment-play-btn.playing').forEach(b => {
+        b.classList.remove('playing');
+        b.textContent = '▶';
+      });
+      segmentPlayEnd = null;
+      if (isPlaying) {
+        videoEl.pause();
+      } else {
+        segmentPlayEnd = end;
+        videoEl.currentTime = start;
+        videoEl.play();
+        playSegBtn.classList.add('playing');
+        playSegBtn.textContent = '■';
+      }
+    });
+
     card.appendChild(checkbox);
     card.appendChild(colorBar);
     card.appendChild(info);
     card.appendChild(durLabel);
+    card.appendChild(playSegBtn);
     segmentsList.appendChild(card);
 
     // Click card to toggle selection
@@ -1388,11 +1455,11 @@ document.addEventListener('keydown', (e) => {
       break;
     case 'ArrowLeft':
       e.preventDefault();
-      videoEl.currentTime = Math.max(0, videoEl.currentTime - 0.3);
+      videoEl.currentTime = Math.max(0, videoEl.currentTime - 0.1);
       break;
     case 'ArrowRight':
       e.preventDefault();
-      videoEl.currentTime = Math.min(videoDuration, videoEl.currentTime + 0.3);
+      videoEl.currentTime = Math.min(videoDuration, videoEl.currentTime + 0.1);
       break;
     case 'KeyZ':
       e.preventDefault();
