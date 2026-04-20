@@ -26,6 +26,7 @@
       --success:     #4caf7d;
       --radius:      8px;
       --font:        'Inter', system-ui, sans-serif;
+      --sidebar-w:   320px;
     }
 
     html, body {
@@ -41,7 +42,7 @@
     #app {
       display: grid;
       grid-template-rows: 48px 1fr 140px 300px;
-      grid-template-columns: 1fr 320px;
+      grid-template-columns: 1fr var(--sidebar-w);
       grid-template-areas:
         "header  header"
         "player  sidebar"
@@ -602,6 +603,22 @@
       width: 0%;
     }
 
+    /* ===== SIDEBAR RESIZE HANDLE ===== */
+    #sidebar-resize-handle {
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 5px;
+      cursor: col-resize;
+      z-index: 20;
+      transition: background 0.15s;
+    }
+    #sidebar-resize-handle:hover,
+    #sidebar-resize-handle.resizing {
+      background: rgba(91,106,240,0.5);
+    }
+
     /* ===== SIDEBAR ===== */
     #sidebar {
       grid-area: sidebar;
@@ -610,6 +627,7 @@
       display: flex;
       flex-direction: column;
       overflow: hidden;
+      position: relative;
     }
 
     #sidebar-header {
@@ -804,6 +822,8 @@
       .segment-delete-btn { width: 28px; height: 28px; font-size: 14px; }
       .segment-checkbox { width: 18px; height: 18px; font-size: 11px; }
 
+      #sidebar-resize-handle { display: none; }
+
       /* ── Sidebar → thin export bar ── */
       #sidebar {
         border-left: none;
@@ -922,6 +942,7 @@
 
   <!-- Sidebar -->
   <aside id="sidebar">
+    <div id="sidebar-resize-handle"></div>
     <div id="sidebar-header">
       FFmpeg
       <span id="ffmpeg-status" class="status-loading">Loading…</span>
@@ -1276,11 +1297,17 @@ timelineTrack.addEventListener('mousedown', (e) => {
   const startX = e.clientX;
   let isDragging = false;
 
+  // Immediately move playhead to clicked position
+  const rect0 = timelineTrack.getBoundingClientRect();
+  const initPct = Math.max(0, Math.min(1, (startX - rect0.left) / rect0.width));
+  playhead.style.left = (initPct * 100) + '%';
+
   const onMove = (ev) => {
     if (!isDragging && Math.abs(ev.clientX - startX) > 4) {
       isDragging = true;
       wasPlayingBeforeScrub = !videoEl.paused;
       if (wasPlayingBeforeScrub) videoEl.pause();
+      applySeek(initPct * videoDuration); // seek from initial touch position
     }
     if (isDragging) seekToPositionX(ev.clientX);
   };
@@ -1292,12 +1319,8 @@ timelineTrack.addEventListener('mousedown', (e) => {
       if (wasPlayingBeforeScrub) videoEl.play();
     } else {
       // Click: seek + toggle segment selection
-      const rect = timelineTrack.getBoundingClientRect();
-      const pct = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
-      const t = pct * videoDuration;
-      playhead.style.left = (pct * 100) + '%';
-      applySeek(t);
-      toggleSegmentAtTime(t);
+      applySeek(initPct * videoDuration);
+      toggleSegmentAtTime(initPct * videoDuration);
     }
   };
   document.addEventListener('mousemove', onMove);
@@ -1313,14 +1336,21 @@ timelineTrack.addEventListener('touchstart', (e) => {
   const startX = e.touches[0].clientX;
   let isDragging = false;
 
+  // Immediately move playhead to touched position
+  const rect0 = timelineTrack.getBoundingClientRect();
+  const initPct = Math.max(0, Math.min(1, (startX - rect0.left) / rect0.width));
+  playhead.style.left = (initPct * 100) + '%';
+
   const onMove = (ev) => {
     ev.preventDefault();
-    if (!isDragging && Math.abs(ev.touches[0].clientX - startX) > 8) {
+    const cx = ev.touches[0].clientX;
+    if (!isDragging && Math.abs(cx - startX) > 6) {
       isDragging = true;
       wasPlayingBeforeScrub = !videoEl.paused;
       if (wasPlayingBeforeScrub) videoEl.pause();
+      applySeek(initPct * videoDuration); // seek from initial touch position
     }
-    if (isDragging) seekToPositionX(ev.touches[0].clientX);
+    if (isDragging) seekToPositionX(cx);
   };
   const onEnd = () => {
     document.removeEventListener('touchmove', onMove);
@@ -1330,12 +1360,8 @@ timelineTrack.addEventListener('touchstart', (e) => {
       if (wasPlayingBeforeScrub) videoEl.play();
     } else {
       // Tap: seek + toggle segment selection
-      const rect = timelineTrack.getBoundingClientRect();
-      const pct = Math.max(0, Math.min(1, (startX - rect.left) / rect.width));
-      const t = pct * videoDuration;
-      playhead.style.left = (pct * 100) + '%';
-      applySeek(t);
-      toggleSegmentAtTime(t);
+      applySeek(initPct * videoDuration);
+      toggleSegmentAtTime(initPct * videoDuration);
     }
   };
   document.addEventListener('touchmove', onMove, { passive: false });
@@ -1738,6 +1764,30 @@ document.addEventListener('keydown', (e) => {
 // Resize: rebuild labels
 window.addEventListener('resize', () => {
   if (videoDuration) buildTimelineLabels();
+});
+
+// ─── Sidebar resize ───────────────────────────────────────────────────────────
+const sidebarResizeHandle = document.getElementById('sidebar-resize-handle');
+const appEl2 = document.getElementById('app');
+
+sidebarResizeHandle.addEventListener('mousedown', (e) => {
+  e.preventDefault();
+  sidebarResizeHandle.classList.add('resizing');
+  const startX = e.clientX;
+  const startW = document.getElementById('sidebar').offsetWidth;
+
+  const onMove = (ev) => {
+    const newW = Math.max(200, Math.min(500, startW - (ev.clientX - startX)));
+    document.documentElement.style.setProperty('--sidebar-w', newW + 'px');
+  };
+  const onUp = () => {
+    sidebarResizeHandle.classList.remove('resizing');
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    if (videoDuration) buildTimelineLabels();
+  };
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
 });
 
 // ─── FFmpeg loading ──────────────────────────────────────────────────────────
