@@ -533,6 +533,7 @@
     }
     .segment-play-btn:hover { opacity: 1; transform: scale(1.1); }
     .segment-play-btn.playing { background: var(--accent2); opacity: 1; padding-left: 0; }
+    .segment-play-btn.paused  { opacity: 1; }
 
     .segment-delete-btn {
       width: 24px;
@@ -1192,11 +1193,12 @@ function loadVideoFile(file) {
 // Stop segment preview at end boundary
 videoEl.addEventListener('timeupdate', () => {
   if (segmentPlayEnd !== null && videoEl.currentTime >= segmentPlayEnd) {
+    const endTime = segmentPlayEnd;
+    segmentPlayEnd = null; // clear before pause so the pause listener knows it's segment-end
     videoEl.pause();
-    videoEl.currentTime = segmentPlayEnd;
-    segmentPlayEnd = null;
-    document.querySelectorAll('.segment-play-btn.playing').forEach(b => {
-      b.classList.remove('playing');
+    videoEl.currentTime = endTime;
+    document.querySelectorAll('.segment-play-btn.playing, .segment-play-btn.paused').forEach(b => {
+      b.classList.remove('playing', 'paused');
       b.textContent = '▶';
     });
   }
@@ -1215,8 +1217,26 @@ videoEl.addEventListener('loadedmetadata', () => {
 
 // ─── Playback controls ───────────────────────────────────────────────────────
 playBtn.addEventListener('click', togglePlay);
-videoEl.addEventListener('play',  () => { playBtn.textContent = '⏸'; });
-videoEl.addEventListener('pause', () => { playBtn.textContent = '▶'; });
+videoEl.addEventListener('play', () => {
+  playBtn.textContent = '⏸';
+  if (segmentPlayEnd !== null) {
+    document.querySelectorAll('.segment-play-btn.paused').forEach(b => {
+      b.classList.remove('paused');
+      b.classList.add('playing');
+      b.textContent = '⏸';
+    });
+  }
+});
+videoEl.addEventListener('pause', () => {
+  playBtn.textContent = '▶';
+  if (segmentPlayEnd !== null) {
+    document.querySelectorAll('.segment-play-btn.playing').forEach(b => {
+      b.classList.remove('playing');
+      b.classList.add('paused');
+      b.textContent = '▶';
+    });
+  }
+});
 videoEl.addEventListener('ended', () => { playBtn.textContent = '▶'; });
 
 videoEl.addEventListener('timeupdate', () => {
@@ -1668,25 +1688,41 @@ function renderSegments() {
 
     const playSegBtn = document.createElement('button');
     playSegBtn.className = 'segment-play-btn';
-    playSegBtn.textContent = '▶';
-    playSegBtn.title = 'この区間を再生';
+    // Restore correct state if this segment is active
+    if (segmentPlayEnd === end) {
+      if (!videoEl.paused) {
+        playSegBtn.classList.add('playing');
+        playSegBtn.textContent = '⏸';
+      } else {
+        playSegBtn.classList.add('paused');
+        playSegBtn.textContent = '▶';
+      }
+    } else {
+      playSegBtn.textContent = '▶';
+    }
+    playSegBtn.title = 'この区間を再生 / 一時停止';
     playSegBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       const isPlaying = playSegBtn.classList.contains('playing');
-      // Reset all play buttons
-      document.querySelectorAll('.segment-play-btn.playing').forEach(b => {
-        b.classList.remove('playing');
-        b.textContent = '▶';
-      });
-      segmentPlayEnd = null;
+      const isPaused  = playSegBtn.classList.contains('paused');
+
       if (isPlaying) {
+        // Pause
         videoEl.pause();
+      } else if (isPaused) {
+        // Resume
+        videoEl.play();
       } else {
+        // Start from beginning of this segment
+        document.querySelectorAll('.segment-play-btn.playing, .segment-play-btn.paused').forEach(b => {
+          b.classList.remove('playing', 'paused');
+          b.textContent = '▶';
+        });
         segmentPlayEnd = end;
         videoEl.currentTime = start;
         videoEl.play();
         playSegBtn.classList.add('playing');
-        playSegBtn.textContent = '■';
+        playSegBtn.textContent = '⏸';
       }
     });
 
