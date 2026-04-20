@@ -545,6 +545,21 @@
     }
     .segment-delete-btn:hover { background: rgba(224,82,82,0.15); color: var(--danger); }
 
+    .segment-card.excluded {
+      opacity: 0.45;
+    }
+    .segment-card.excluded .segment-name-input {
+      text-decoration: line-through;
+      color: var(--text-dim);
+    }
+    .segment-card.excluded .segment-delete-btn {
+      color: var(--success);
+    }
+    .segment-card.excluded .segment-delete-btn:hover {
+      background: rgba(76,175,125,0.15);
+      color: var(--success);
+    }
+
     /* Select-all row in header */
     #select-all-btn {
       font-size: 11px;
@@ -957,6 +972,7 @@ let ffmpeg       = null;
 let ffmpegReady  = false;
 let isExporting  = false;
 let selectedSegments = new Set();  // indices of selected segments
+let excludedSegments = new Set();  // indices excluded (will not be exported)
 let segmentPlayEnd = null;         // end time of currently previewing segment
 let segmentNames = {};             // index → custom name
 
@@ -1080,6 +1096,7 @@ function loadVideoFile(file) {
   videoFile = file;
   splitPoints = [];
   selectedSegments.clear();
+  excludedSegments.clear();
   segmentNames = {};
   ffmpegInputName = null;
 
@@ -1349,7 +1366,14 @@ function renderTrackFills() {
     seg.className = 'tl-segment';
     seg.style.left  = (start / videoDuration * 100) + '%';
     seg.style.width = ((end - start) / videoDuration * 100) + '%';
-    seg.style.background = COLORS[i % COLORS.length];
+    if (excludedSegments.has(i)) {
+      // Excluded: dark hatched pattern
+      seg.style.background = 'repeating-linear-gradient(45deg, #1a1d27 0px, #1a1d27 4px, #2e3350 4px, #2e3350 8px)';
+      seg.style.opacity = '0.6';
+    } else {
+      seg.style.background = COLORS[i % COLORS.length];
+      seg.style.opacity = '';
+    }
     timelineTrack.insertBefore(seg, playhead);
   }
 }
@@ -1387,37 +1411,17 @@ document.addEventListener('mouseup', endMarkerDrag);
 document.addEventListener('touchmove', (e) => { if (draggingMarker) { e.preventDefault(); handleMarkerDrag(e.touches[0].clientX); } }, { passive: false });
 document.addEventListener('touchend', endMarkerDrag);
 
-// ─── Segment deletion ────────────────────────────────────────────────────────
-function deleteSegment(index) {
-  if (splitPoints.length === 0) return; // only 1 segment, nothing to delete
-
-  // Remove the split point that bounds this segment:
-  // - For segments 0..N-1: remove splitPoints[index] (right boundary → merge with next)
-  // - For the last segment: remove splitPoints[index-1] (left boundary → merge with prev)
-  const removeIdx = index < splitPoints.length ? index : index - 1;
-  splitPoints.splice(removeIdx, 1);
-
-  // Remap selectedSegments: indices after the deleted one shift down by 1
-  const newSelected = new Set();
-  for (const idx of selectedSegments) {
-    if (idx < index) newSelected.add(idx);
-    else if (idx > index) newSelected.add(idx - 1);
-    // idx === index is dropped (segment deleted)
+// ─── Segment exclusion (cut out from export) ─────────────────────────────────
+function toggleExcludeSegment(index) {
+  if (excludedSegments.has(index)) {
+    excludedSegments.delete(index);
+  } else {
+    excludedSegments.add(index);
+    selectedSegments.delete(index); // excluded → deselect
   }
-  selectedSegments = newSelected;
-
-  // Remap segmentNames
-  const newNames = {};
-  for (const [key, val] of Object.entries(segmentNames)) {
-    const k = parseInt(key);
-    if (k < index) newNames[k] = val;
-    else if (k > index) newNames[k - 1] = val;
-  }
-  segmentNames = newNames;
-
-  infoSplits.textContent = splitPoints.length;
-  renderMarkers();
   renderSegments();
+  renderTrackFills();
+  updateSelectionUI();
 }
 
 // ─── Segments list ───────────────────────────────────────────────────────────
@@ -1458,7 +1462,8 @@ function renderSegments() {
     const color = COLORS[i % COLORS.length];
 
     const card = document.createElement('div');
-    card.className = 'segment-card' + (selectedSegments.has(i) ? ' selected' : '');
+    const isExcluded = excludedSegments.has(i);
+    card.className = 'segment-card' + (selectedSegments.has(i) ? ' selected' : '') + (isExcluded ? ' excluded' : '');
     card.id = 'seg-card-' + i;
 
     // Checkbox indicator
@@ -1543,18 +1548,19 @@ function renderSegments() {
 
     const delSegBtn = document.createElement('button');
     delSegBtn.className = 'segment-delete-btn';
-    delSegBtn.textContent = '✕';
-    delSegBtn.title = 'このセグメントを削除';
+    delSegBtn.textContent = isExcluded ? '↺' : '✕';
+    delSegBtn.title = isExcluded ? 'セグメントを復元' : 'セグメントをカット（除外）';
     delSegBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      deleteSegment(i);
+      toggleExcludeSegment(i);
     });
     card.appendChild(delSegBtn);
 
     segmentsList.appendChild(card);
 
-    // Click card to toggle selection
+    // Click card to toggle selection (excluded segments cannot be selected)
     card.addEventListener('click', () => {
+      if (excludedSegments.has(i)) return;
       if (selectedSegments.has(i)) {
         selectedSegments.delete(i);
       } else {
@@ -1576,7 +1582,7 @@ selectAllBtn.addEventListener('click', () => {
   if (allSelected) {
     selectedSegments.clear();
   } else {
-    for (let i = 0; i < count; i++) selectedSegments.add(i);
+    for (let i = 0; i < count; i++) { if (!excludedSegments.has(i)) selectedSegments.add(i); }
   }
   renderSegments();
   updateSelectionUI();
@@ -1778,7 +1784,7 @@ exportAllBtn.addEventListener('click', async () => {
   exportAllBtn.disabled = true;
 
   const boundaries = [0, ...splitPoints, videoDuration];
-  const indices = [...selectedSegments].sort((a, b) => a - b);
+  const indices = [...selectedSegments].filter(i => !excludedSegments.has(i)).sort((a, b) => a - b);
   const total = indices.length;
 
   globalProgressWrap.classList.add('active');
