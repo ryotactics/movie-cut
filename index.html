@@ -1,0 +1,1568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Movie Cut — Video Splitter</title>
+  <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
+  <style>
+    /* ===== RESET & BASE ===== */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:          #0f1117;
+      --surface:     #1a1d27;
+      --surface2:    #22263a;
+      --border:      #2e3350;
+      --accent:      #5b6af0;
+      --accent-glow: rgba(91,106,240,0.35);
+      --accent2:     #f05b8a;
+      --text:        #e8eaf6;
+      --text-dim:    #7b82a8;
+      --marker:      #f9c846;
+      --marker-dark: #c49a20;
+      --danger:      #e05252;
+      --success:     #4caf7d;
+      --radius:      8px;
+      --font:        'Inter', system-ui, sans-serif;
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 14px;
+      overflow: hidden;
+    }
+
+    /* ===== LAYOUT ===== */
+    #app {
+      display: grid;
+      grid-template-rows: 48px 1fr 180px 220px;
+      grid-template-columns: 1fr 320px;
+      grid-template-areas:
+        "header  header"
+        "player  sidebar"
+        "timeline sidebar"
+        "segments sidebar";
+      height: 100vh;
+      gap: 0;
+    }
+
+    /* ===== HEADER ===== */
+    #header {
+      grid-area: header;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 20px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      z-index: 10;
+    }
+
+    #header .logo {
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      color: var(--text);
+    }
+
+    #header .logo span { color: var(--accent); }
+
+    #header-actions {
+      margin-left: auto;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    /* ===== BUTTONS ===== */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 14px;
+      border-radius: var(--radius);
+      border: none;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      transition: background 0.15s, opacity 0.15s, transform 0.1s;
+      white-space: nowrap;
+    }
+    .btn:active { transform: scale(0.97); }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+    .btn-primary  { background: var(--accent); color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: #7080f5; }
+
+    .btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+    .btn-secondary:hover:not(:disabled) { background: #2c3050; }
+
+    .btn-danger { background: var(--danger); color: #fff; }
+    .btn-danger:hover:not(:disabled) { background: #f06060; }
+
+    .btn-icon {
+      padding: 5px 8px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: var(--radius);
+    }
+    .btn-icon:hover { background: #2c3050; }
+
+    /* ===== DROP ZONE ===== */
+    #drop-zone {
+      grid-column: 1 / 3;
+      grid-row: 1 / 5;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 20px;
+      cursor: pointer;
+      transition: background 0.2s;
+      background: var(--bg);
+      z-index: 5;
+    }
+
+    #drop-zone.drag-over {
+      background: rgba(91, 106, 240, 0.08);
+      border: 2px dashed var(--accent);
+    }
+
+    #drop-zone .drop-icon {
+      width: 80px;
+      height: 80px;
+      border-radius: 50%;
+      background: var(--surface2);
+      border: 2px dashed var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 32px;
+      transition: border-color 0.2s, background 0.2s;
+    }
+
+    #drop-zone.drag-over .drop-icon {
+      border-color: var(--accent);
+      background: var(--accent-glow);
+    }
+
+    #drop-zone h2 {
+      font-size: 22px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    #drop-zone p {
+      color: var(--text-dim);
+      font-size: 14px;
+    }
+
+    #file-input { display: none; }
+
+    /* ===== PLAYER AREA ===== */
+    #player-area {
+      grid-area: player;
+      background: #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      overflow: hidden;
+    }
+
+    #video {
+      max-width: 100%;
+      max-height: 100%;
+      display: block;
+    }
+
+    /* ===== PLAYER CONTROLS ===== */
+    #controls {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      padding: 10px 16px 12px;
+      background: linear-gradient(transparent, rgba(0,0,0,0.85));
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      opacity: 0;
+      transition: opacity 0.25s;
+    }
+
+    #player-area:hover #controls { opacity: 1; }
+
+    #play-btn {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.15);
+      border: none;
+      color: #fff;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      flex-shrink: 0;
+      transition: background 0.15s;
+    }
+    #play-btn:hover { background: rgba(255,255,255,0.3); }
+
+    .time-display {
+      color: #fff;
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    #volume-slider {
+      width: 70px;
+      flex-shrink: 0;
+      accent-color: var(--accent);
+    }
+
+    #add-split-btn-ctrl {
+      margin-left: auto;
+    }
+
+    /* ===== TIMELINE ===== */
+    #timeline-area {
+      grid-area: timeline;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      padding: 10px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      position: relative;
+    }
+
+    #timeline-labels {
+      height: 16px;
+      position: relative;
+      pointer-events: none;
+    }
+
+    .tl-label {
+      position: absolute;
+      transform: translateX(-50%);
+      font-size: 10px;
+      color: var(--text-dim);
+      white-space: nowrap;
+    }
+
+    #timeline-track-wrap {
+      position: relative;
+      height: 54px;
+    }
+
+    #timeline-track {
+      width: 100%;
+      height: 28px;
+      background: var(--surface2);
+      border-radius: 4px;
+      position: relative;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      overflow: visible;
+      top: 13px;
+    }
+
+    /* segment coloring inside track */
+    .tl-segment {
+      position: absolute;
+      top: 0;
+      height: 100%;
+      border-right: 1px solid var(--bg);
+      opacity: 0.55;
+      pointer-events: none;
+    }
+
+    /* playhead */
+    #playhead {
+      position: absolute;
+      top: -13px;
+      width: 2px;
+      height: 54px;
+      background: #fff;
+      border-radius: 1px;
+      pointer-events: none;
+      z-index: 4;
+      transform: translateX(-1px);
+    }
+
+    #playhead::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 10px;
+      height: 10px;
+      background: #fff;
+      border-radius: 50%;
+    }
+
+    /* split markers */
+    .split-marker {
+      position: absolute;
+      top: -13px;
+      height: 54px;
+      width: 3px;
+      background: var(--marker);
+      transform: translateX(-1px);
+      cursor: ew-resize;
+      z-index: 3;
+      border-radius: 2px;
+      box-shadow: 0 0 6px rgba(249,200,70,0.6);
+    }
+
+    .split-marker:hover { background: #ffe082; box-shadow: 0 0 10px rgba(249,200,70,0.9); }
+
+    .split-marker .marker-handle {
+      position: absolute;
+      top: -2px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 12px;
+      height: 12px;
+      background: var(--marker);
+      border-radius: 50%;
+    }
+
+    .split-marker .marker-delete {
+      position: absolute;
+      bottom: -20px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 16px;
+      height: 16px;
+      background: var(--danger);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      cursor: pointer;
+      opacity: 0;
+      transition: opacity 0.15s;
+      color: #fff;
+      border: none;
+      z-index: 5;
+    }
+
+    .split-marker:hover .marker-delete { opacity: 1; }
+
+    #timeline-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    #split-hint {
+      margin-left: auto;
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+
+    /* ===== SEGMENTS PANEL ===== */
+    #segments-area {
+      grid-area: segments;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    #segments-header {
+      padding: 8px 16px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    #segments-header h3 {
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    #segments-count {
+      font-size: 11px;
+      color: var(--text-dim);
+      background: var(--surface2);
+      padding: 2px 7px;
+      border-radius: 10px;
+    }
+
+    #segments-list {
+      overflow-y: auto;
+      flex: 1;
+      padding: 6px 16px 10px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-content: flex-start;
+    }
+
+    .segment-card {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 8px 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 220px;
+      flex: 0 0 auto;
+      transition: border-color 0.15s, background 0.15s;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .segment-card:hover { border-color: var(--accent); }
+
+    .segment-card.selected {
+      border-color: var(--accent);
+      background: rgba(91,106,240,0.15);
+    }
+
+    /* Checkbox */
+    .segment-checkbox {
+      width: 16px;
+      height: 16px;
+      border: 2px solid var(--border);
+      border-radius: 4px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .segment-card.selected .segment-checkbox {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .segment-color {
+      width: 10px;
+      height: 34px;
+      border-radius: 3px;
+      flex-shrink: 0;
+    }
+
+    .segment-info { flex: 1; min-width: 0; }
+
+    .segment-name-input {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text);
+      background: transparent;
+      border: none;
+      border-bottom: 1px solid transparent;
+      outline: none;
+      width: 100%;
+      padding: 0 0 1px;
+      margin-bottom: 2px;
+      font-family: var(--font);
+      cursor: text;
+      transition: border-color 0.15s;
+    }
+    .segment-name-input:focus {
+      border-bottom-color: var(--accent);
+      background: rgba(91,106,240,0.08);
+      border-radius: 3px 3px 0 0;
+      cursor: text;
+    }
+
+    .segment-times {
+      font-size: 11px;
+      color: var(--text-dim);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .segment-duration {
+      font-size: 11px;
+      color: var(--accent);
+      font-weight: 600;
+      margin-left: auto;
+      flex-shrink: 0;
+    }
+
+    /* Select-all row in header */
+    #select-all-btn {
+      font-size: 11px;
+      padding: 3px 10px;
+      margin-left: auto;
+    }
+
+    #selected-count {
+      font-size: 11px;
+      color: var(--accent);
+      margin-left: 4px;
+      opacity: 0;
+      transition: opacity 0.15s;
+    }
+    #selected-count.visible { opacity: 1; }
+
+    .segment-progress {
+      width: 100%;
+      height: 3px;
+      background: var(--border);
+      border-radius: 2px;
+      overflow: hidden;
+      margin-top: 6px;
+      display: none;
+    }
+
+    .segment-progress.active { display: block; }
+
+    .segment-progress-bar {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 2px;
+      transition: width 0.2s;
+      width: 0%;
+    }
+
+    /* ===== SIDEBAR ===== */
+    #sidebar {
+      grid-area: sidebar;
+      background: var(--surface);
+      border-left: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    #sidebar-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    #ffmpeg-status {
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-weight: 500;
+      margin-left: auto;
+    }
+
+    .status-loading { background: rgba(249,200,70,0.2); color: var(--marker); }
+    .status-ready   { background: rgba(76,175,125,0.2); color: var(--success); }
+    .status-error   { background: rgba(224,82,82,0.2);  color: var(--danger); }
+
+    #sidebar-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .info-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+    }
+
+    .info-row .label { color: var(--text-dim); }
+    .info-row .value { font-weight: 500; font-variant-numeric: tabular-nums; }
+
+    #global-progress-wrap {
+      display: none;
+    }
+    #global-progress-wrap.active { display: block; }
+
+    #global-progress-label {
+      font-size: 12px;
+      color: var(--text-dim);
+      margin-bottom: 4px;
+    }
+
+    #global-progress-bar-wrap {
+      width: 100%;
+      height: 6px;
+      background: var(--border);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    #global-progress-bar {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 3px;
+      transition: width 0.2s;
+      width: 0%;
+    }
+
+    #export-all-btn {
+      width: 100%;
+      justify-content: center;
+    }
+
+    .divider {
+      height: 1px;
+      background: var(--border);
+    }
+
+    #keyboard-shortcuts {
+      font-size: 11px;
+      color: var(--text-dim);
+      line-height: 1.8;
+    }
+
+    #keyboard-shortcuts kbd {
+      display: inline-block;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 1px 5px;
+      font-size: 10px;
+      font-family: monospace;
+      color: var(--text);
+    }
+
+    /* ===== TOAST ===== */
+    #toast-container {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 1000;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      pointer-events: none;
+    }
+
+    .toast {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 8px 16px;
+      font-size: 13px;
+      color: var(--text);
+      opacity: 0;
+      transform: translateY(10px);
+      transition: opacity 0.2s, transform 0.2s;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .toast.success { border-color: var(--success); color: var(--success); }
+    .toast.error   { border-color: var(--danger);  color: var(--danger); }
+
+    /* ===== SCROLLBAR ===== */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #4a5070; }
+
+    /* ===== SEGMENT COLORS palette ===== */
+    .seg-color-0  { background: #5b6af0; }
+    .seg-color-1  { background: #f05b8a; }
+    .seg-color-2  { background: #4caf7d; }
+    .seg-color-3  { background: #f9c846; }
+    .seg-color-4  { background: #5bc8f0; }
+    .seg-color-5  { background: #c85bf0; }
+    .seg-color-6  { background: #f08c5b; }
+    .seg-color-7  { background: #5bf0b8; }
+
+    /* ===== NO VIDEO PLACEHOLDER in player ===== */
+    #player-placeholder {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-dim);
+      font-size: 14px;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+
+<!-- ===== DROP ZONE (shown before video loaded) ===== -->
+<div id="drop-zone">
+  <div class="drop-icon">🎬</div>
+  <h2>Drop a video file here</h2>
+  <p>or click to browse — supports MP4, MKV, MOV, WebM, AVI…</p>
+  <button class="btn btn-primary" id="browse-btn">Browse file</button>
+  <input type="file" id="file-input" accept="video/*" />
+</div>
+
+<!-- ===== MAIN APP (hidden until video loaded) ===== -->
+<div id="app" style="display:none;">
+
+  <!-- Header -->
+  <header id="header">
+    <div class="logo">Movie<span>Cut</span></div>
+    <span id="file-name-label" style="color:var(--text-dim); font-size:12px;"></span>
+    <div id="header-actions">
+      <button class="btn btn-secondary" id="change-file-btn">Change file</button>
+      <button class="btn btn-primary" id="add-split-header-btn">✂ Add split here</button>
+    </div>
+  </header>
+
+  <!-- Player -->
+  <div id="player-area">
+    <div id="player-placeholder">No video loaded</div>
+    <video id="video" preload="metadata"></video>
+    <div id="controls">
+      <button id="play-btn" title="Play/Pause (Space)">▶</button>
+      <span class="time-display" id="time-display">0:00 / 0:00</span>
+      <input type="range" id="volume-slider" min="0" max="1" step="0.05" value="1" title="Volume" />
+      <button class="btn btn-secondary btn-icon add-split-btn-ctrl" id="add-split-btn-ctrl" title="Add split at current time (S / M)">✂ Split</button>
+    </div>
+  </div>
+
+  <!-- Timeline -->
+  <div id="timeline-area">
+    <div id="timeline-labels"></div>
+    <div id="timeline-track-wrap">
+      <div id="timeline-track">
+        <!-- segment fills, markers, and playhead are injected here -->
+        <div id="playhead" style="left:0%"></div>
+      </div>
+    </div>
+    <div id="timeline-actions">
+      <span id="split-hint">
+        <kbd style="background:var(--surface2);border:1px solid var(--border);border-radius:3px;padding:1px 5px;font-size:10px;font-family:monospace;">S</kbd>
+        or
+        <kbd style="background:var(--surface2);border:1px solid var(--border);border-radius:3px;padding:1px 5px;font-size:10px;font-family:monospace;">M</kbd>
+        &nbsp;— add split point &nbsp;|&nbsp; drag markers to adjust &nbsp;|&nbsp; hover marker → ✕ to delete
+      </span>
+    </div>
+  </div>
+
+  <!-- Segments list -->
+  <div id="segments-area">
+    <div id="segments-header">
+      <h3>Segments</h3>
+      <span id="segments-count">0</span>
+      <span id="selected-count"></span>
+      <button class="btn btn-secondary" id="select-all-btn" disabled>全選択</button>
+    </div>
+    <div id="segments-list"></div>
+  </div>
+
+  <!-- Sidebar -->
+  <aside id="sidebar">
+    <div id="sidebar-header">
+      FFmpeg
+      <span id="ffmpeg-status" class="status-loading">Loading…</span>
+    </div>
+    <div id="sidebar-content">
+      <div class="info-row">
+        <span class="label">Duration</span>
+        <span class="value" id="info-duration">—</span>
+      </div>
+      <div class="info-row">
+        <span class="label">Resolution</span>
+        <span class="value" id="info-resolution">—</span>
+      </div>
+      <div class="info-row">
+        <span class="label">File size</span>
+        <span class="value" id="info-filesize">—</span>
+      </div>
+      <div class="info-row">
+        <span class="label">Split points</span>
+        <span class="value" id="info-splits">0</span>
+      </div>
+
+      <div class="divider"></div>
+
+      <div id="global-progress-wrap">
+        <div id="global-progress-label">Exporting… 0 / 0</div>
+        <div id="global-progress-bar-wrap">
+          <div id="global-progress-bar"></div>
+        </div>
+      </div>
+
+      <button class="btn btn-primary" id="export-all-btn" disabled>⬇ 選択したセグメントを保存</button>
+
+      <div class="divider"></div>
+
+      <div id="keyboard-shortcuts">
+        <strong style="color:var(--text); display:block; margin-bottom:6px;">Keyboard shortcuts</strong>
+        <kbd>Space</kbd> Play / Pause<br>
+        <kbd>S</kbd> / <kbd>M</kbd> Add split point<br>
+        <kbd>←</kbd> / <kbd>→</kbd> Seek ±0.3 s<br>
+        <kbd>Z</kbd> Undo last split<br>
+      </div>
+
+      <div class="divider"></div>
+
+      <div style="font-size:11px; color:var(--text-dim); line-height:1.6;">
+        Video is split using <strong style="color:var(--text);">stream copy</strong> (no re-encoding) — fast and lossless.
+        Output files are downloaded as individual MP4 files.
+      </div>
+    </div>
+  </aside>
+
+</div>
+
+<!-- Toast container -->
+<div id="toast-container"></div>
+
+<!-- ===== SCRIPTS ===== -->
+<script>
+'use strict';
+
+// ─── Service Worker registration (for COOP/COEP headers) ───────────────────
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').then((reg) => {
+    // If a new SW just took control, reload so the headers apply to this page
+    if (!navigator.serviceWorker.controller) {
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        window.location.reload();
+      });
+    }
+  }).catch((err) => console.warn('SW registration failed:', err));
+}
+
+// ─── Segment color palette ──────────────────────────────────────────────────
+const COLORS = [
+  '#5b6af0','#f05b8a','#4caf7d','#f9c846',
+  '#5bc8f0','#c85bf0','#f08c5b','#5bf0b8',
+];
+
+// ─── State ──────────────────────────────────────────────────────────────────
+let videoFile    = null;
+let videoDuration = 0;
+let splitPoints  = [];   // sorted array of seconds
+let ffmpeg       = null;
+let ffmpegReady  = false;
+let isExporting  = false;
+let selectedSegments = new Set();  // indices of selected segments
+let segmentNames = {};             // index → custom name
+
+// Drag state for markers
+let draggingMarker = null;   // { el, index }
+let dragStartX     = 0;
+let dragStartTime  = 0;
+
+// ─── DOM refs ───────────────────────────────────────────────────────────────
+const dropZone         = document.getElementById('drop-zone');
+const appEl            = document.getElementById('app');
+const fileInput        = document.getElementById('file-input');
+const browseBtn        = document.getElementById('browse-btn');
+const changeFileBtn    = document.getElementById('change-file-btn');
+const fileNameLabel    = document.getElementById('file-name-label');
+const videoEl          = document.getElementById('video');
+const playBtn          = document.getElementById('play-btn');
+const timeDisplay      = document.getElementById('time-display');
+const volumeSlider     = document.getElementById('volume-slider');
+const addSplitHeaderBtn= document.getElementById('add-split-header-btn');
+const addSplitCtrlBtn  = document.getElementById('add-split-btn-ctrl');
+const timelineTrack    = document.getElementById('timeline-track');
+const timelineLabels   = document.getElementById('timeline-labels');
+const playhead         = document.getElementById('playhead');
+const segmentsList     = document.getElementById('segments-list');
+const segmentsCount    = document.getElementById('segments-count');
+const selectedCount    = document.getElementById('selected-count');
+const selectAllBtn     = document.getElementById('select-all-btn');
+const exportAllBtn     = document.getElementById('export-all-btn');
+const ffmpegStatus     = document.getElementById('ffmpeg-status');
+const globalProgressWrap = document.getElementById('global-progress-wrap');
+const globalProgressLabel= document.getElementById('global-progress-label');
+const globalProgressBar  = document.getElementById('global-progress-bar');
+const infoDuration     = document.getElementById('info-duration');
+const infoResolution   = document.getElementById('info-resolution');
+const infoFilesize     = document.getElementById('info-filesize');
+const infoSplits       = document.getElementById('info-splits');
+const toastContainer   = document.getElementById('toast-container');
+
+// ─── Utility functions ───────────────────────────────────────────────────────
+function formatTime(sec, alwaysHours = false) {
+  if (!isFinite(sec) || sec < 0) sec = 0;
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = Math.floor(sec % 60);
+  if (h > 0 || alwaysHours) {
+    return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+  }
+  return `${m}:${String(s).padStart(2,'0')}`;
+}
+
+function formatBytes(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / 1048576).toFixed(1) + ' MB';
+}
+
+function showToast(msg, type = '', duration = 2800) {
+  const el = document.createElement('div');
+  el.className = 'toast' + (type ? ' ' + type : '');
+  el.textContent = msg;
+  toastContainer.appendChild(el);
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => el.classList.add('show'));
+  });
+  setTimeout(() => {
+    el.classList.remove('show');
+    setTimeout(() => el.remove(), 300);
+  }, duration);
+}
+
+function setFFmpegStatus(text, cls) {
+  ffmpegStatus.textContent = text;
+  ffmpegStatus.className   = 'status-' + cls;
+}
+
+// ─── File loading ────────────────────────────────────────────────────────────
+browseBtn.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', (e) => {
+  if (e.target.files[0]) loadVideoFile(e.target.files[0]);
+});
+
+dropZone.addEventListener('click', (e) => {
+  if (e.target === browseBtn) return;
+  fileInput.click();
+});
+
+dropZone.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  dropZone.classList.add('drag-over');
+});
+
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+
+dropZone.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file && file.type.startsWith('video/')) {
+    loadVideoFile(file);
+  } else {
+    showToast('Please drop a video file', 'error');
+  }
+});
+
+changeFileBtn.addEventListener('click', () => {
+  fileInput.click();
+});
+
+function loadVideoFile(file) {
+  videoFile = file;
+  splitPoints = [];
+  selectedSegments.clear();
+  segmentNames = {};
+  ffmpegInputName = null;
+
+  const url = URL.createObjectURL(file);
+  videoEl.src = url;
+  videoEl.load();
+
+  fileNameLabel.textContent = file.name;
+  infoFilesize.textContent  = formatBytes(file.size);
+
+  dropZone.style.display = 'none';
+  appEl.style.display    = 'grid';
+
+  document.getElementById('player-placeholder').style.display = 'none';
+  videoEl.style.display = 'block';
+}
+
+videoEl.addEventListener('loadedmetadata', () => {
+  videoDuration = videoEl.duration;
+  infoDuration.textContent = formatTime(videoDuration);
+  infoResolution.textContent = videoEl.videoWidth + ' × ' + videoEl.videoHeight;
+  buildTimelineLabels();
+  renderMarkers();
+  renderSegments();
+  updatePlayhead();
+  updateSelectionUI();
+});
+
+// ─── Playback controls ───────────────────────────────────────────────────────
+playBtn.addEventListener('click', togglePlay);
+videoEl.addEventListener('play',  () => { playBtn.textContent = '⏸'; });
+videoEl.addEventListener('pause', () => { playBtn.textContent = '▶'; });
+videoEl.addEventListener('ended', () => { playBtn.textContent = '▶'; });
+
+videoEl.addEventListener('timeupdate', () => {
+  updatePlayhead();
+  const cur  = videoEl.currentTime;
+  const dur  = videoDuration || videoEl.duration || 0;
+  timeDisplay.textContent = formatTime(cur) + ' / ' + formatTime(dur);
+});
+
+volumeSlider.addEventListener('input', () => {
+  videoEl.volume = volumeSlider.value;
+});
+
+function togglePlay() {
+  if (videoEl.paused) videoEl.play();
+  else videoEl.pause();
+}
+
+// ─── Timeline ────────────────────────────────────────────────────────────────
+function buildTimelineLabels() {
+  timelineLabels.innerHTML = '';
+  if (!videoDuration) return;
+
+  // Calculate a nice step based on duration
+  const trackW = timelineTrack.clientWidth || timelineTrack.offsetWidth || 600;
+  const desiredLabels = Math.min(12, Math.floor(trackW / 60));
+  const rawStep = videoDuration / desiredLabels;
+
+  // Nice round steps
+  const steps = [1,2,5,10,15,20,30,60,120,180,300,600,900,1800,3600];
+  let step = steps.find(s => s >= rawStep) || steps[steps.length - 1];
+
+  for (let t = 0; t <= videoDuration; t += step) {
+    const pct = (t / videoDuration) * 100;
+    const label = document.createElement('div');
+    label.className = 'tl-label';
+    label.style.left = pct + '%';
+    label.textContent = formatTime(t);
+    timelineLabels.appendChild(label);
+  }
+}
+
+function updatePlayhead() {
+  if (!videoDuration) return;
+  const pct = (videoEl.currentTime / videoDuration) * 100;
+  playhead.style.left = pct + '%';
+}
+
+// ─── Scrubbing state ─────────────────────────────────────────────────────────
+let isScrubbing = false;
+let wasPlayingBeforeScrub = false;
+let pendingScrubTime = null;
+let seekBusy = false;
+
+function doSeek() {
+  if (pendingScrubTime === null) return;
+  seekBusy = true;
+  const t = pendingScrubTime;
+  pendingScrubTime = null;
+  if (videoEl.fastSeek) {
+    videoEl.fastSeek(t);
+  } else {
+    videoEl.currentTime = t;
+  }
+}
+
+videoEl.addEventListener('seeked', () => {
+  seekBusy = false;
+  if (pendingScrubTime !== null) doSeek();
+});
+
+function applySeek(t) {
+  pendingScrubTime = t;
+  if (!seekBusy) doSeek();
+}
+
+// Click / drag on timeline to seek
+timelineTrack.addEventListener('mousedown', (e) => {
+  if (e.target.classList.contains('split-marker') ||
+      e.target.classList.contains('marker-handle') ||
+      e.target.classList.contains('marker-delete')) return;
+
+  isScrubbing = true;
+  wasPlayingBeforeScrub = !videoEl.paused;
+  if (wasPlayingBeforeScrub) videoEl.pause();
+
+  seekToPosition(e);
+
+  const onMove = (ev) => seekToPosition(ev);
+  const onUp   = () => {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    isScrubbing = false;
+    if (wasPlayingBeforeScrub) videoEl.play();
+  };
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+});
+
+function seekToPosition(e) {
+  const rect = timelineTrack.getBoundingClientRect();
+  let pct = (e.clientX - rect.left) / rect.width;
+  pct = Math.max(0, Math.min(1, pct));
+  const t = pct * videoDuration;
+
+  // Move playhead immediately for instant visual feedback
+  playhead.style.left = (pct * 100) + '%';
+  timeDisplay.textContent = formatTime(t) + ' / ' + formatTime(videoDuration);
+
+  applySeek(t);
+}
+
+// ─── Split points ────────────────────────────────────────────────────────────
+function addSplitAtCurrentTime() {
+  const t = videoEl.currentTime;
+  if (!videoDuration || t <= 0 || t >= videoDuration) {
+    showToast('Cannot add split at start or end', 'error');
+    return;
+  }
+  // Prevent duplicate (within 0.1 s)
+  if (splitPoints.some(p => Math.abs(p - t) < 0.1)) {
+    showToast('Split point already exists here', 'error');
+    return;
+  }
+  splitPoints.push(t);
+  splitPoints.sort((a, b) => a - b);
+  infoSplits.textContent = splitPoints.length;
+  renderMarkers();
+  renderSegments();
+  showToast(`Split added at ${formatTime(t)}`, 'success');
+}
+
+addSplitHeaderBtn.addEventListener('click', addSplitAtCurrentTime);
+addSplitCtrlBtn.addEventListener('click', addSplitAtCurrentTime);
+
+function deleteMarker(index) {
+  const t = splitPoints[index];
+  splitPoints.splice(index, 1);
+  infoSplits.textContent = splitPoints.length;
+  renderMarkers();
+  renderSegments();
+  showToast(`Split at ${formatTime(t)} removed`);
+}
+
+function renderMarkers() {
+  // Remove existing markers
+  timelineTrack.querySelectorAll('.split-marker').forEach(el => el.remove());
+
+  splitPoints.forEach((t, i) => {
+    const pct = (t / videoDuration) * 100;
+    const marker = document.createElement('div');
+    marker.className = 'split-marker';
+    marker.style.left = pct + '%';
+    marker.dataset.index = i;
+    marker.title = formatTime(t);
+
+    const handle = document.createElement('div');
+    handle.className = 'marker-handle';
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'marker-delete';
+    delBtn.textContent = '✕';
+    delBtn.title = 'Delete split';
+    delBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteMarker(i);
+    });
+
+    marker.appendChild(handle);
+    marker.appendChild(delBtn);
+
+    // Drag
+    marker.addEventListener('mousedown', (e) => {
+      if (e.target === delBtn) return;
+      e.preventDefault();
+      e.stopPropagation();
+      draggingMarker = { el: marker, index: i };
+      dragStartX     = e.clientX;
+      dragStartTime  = splitPoints[i];
+    });
+
+    // Right-click to delete
+    marker.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      deleteMarker(i);
+    });
+
+    timelineTrack.appendChild(marker);
+  });
+
+  // Render segment fills
+  renderTrackFills();
+}
+
+function renderTrackFills() {
+  timelineTrack.querySelectorAll('.tl-segment').forEach(el => el.remove());
+
+  const boundaries = [0, ...splitPoints, videoDuration];
+  for (let i = 0; i < boundaries.length - 1; i++) {
+    const start = boundaries[i];
+    const end   = boundaries[i + 1];
+    const seg   = document.createElement('div');
+    seg.className = 'tl-segment';
+    seg.style.left  = (start / videoDuration * 100) + '%';
+    seg.style.width = ((end - start) / videoDuration * 100) + '%';
+    seg.style.background = COLORS[i % COLORS.length];
+    timelineTrack.insertBefore(seg, playhead);
+  }
+}
+
+// ─── Marker dragging ─────────────────────────────────────────────────────────
+document.addEventListener('mousemove', (e) => {
+  if (!draggingMarker) return;
+  const rect  = timelineTrack.getBoundingClientRect();
+  const dx    = e.clientX - dragStartX;
+  const dt    = (dx / rect.width) * videoDuration;
+  let newTime = dragStartTime + dt;
+  newTime = Math.max(0.05, Math.min(videoDuration - 0.05, newTime));
+
+  // Clamp to not overlap other markers (within 0.1 s)
+  const otherTimes = splitPoints.filter((_, idx) => idx !== draggingMarker.index);
+  for (const ot of otherTimes) {
+    if (Math.abs(newTime - ot) < 0.1) return;
+  }
+
+  splitPoints[draggingMarker.index] = newTime;
+  splitPoints.sort((a, b) => a - b);
+
+  // Recalculate the dragging marker's new index after sort
+  const newIdx = splitPoints.indexOf(newTime);
+  draggingMarker.index = newIdx;
+
+  renderMarkers();
+  renderSegments();
+});
+
+document.addEventListener('mouseup', () => {
+  if (draggingMarker) {
+    infoSplits.textContent = splitPoints.length;
+    draggingMarker = null;
+  }
+});
+
+// ─── Segments list ───────────────────────────────────────────────────────────
+function updateSelectionUI() {
+  const n = selectedSegments.size;
+  if (n > 0) {
+    selectedCount.textContent = `${n}件選択中`;
+    selectedCount.classList.add('visible');
+    exportAllBtn.textContent = `⬇ 選択した${n}件を保存`;
+    exportAllBtn.disabled = !ffmpegReady || isExporting;
+  } else {
+    selectedCount.classList.remove('visible');
+    exportAllBtn.textContent = '⬇ 選択したセグメントを保存';
+    exportAllBtn.disabled = true;
+  }
+}
+
+function renderSegments() {
+  segmentsList.innerHTML = '';
+  const boundaries = [0, ...splitPoints, videoDuration];
+  const count = boundaries.length - 1;
+  segmentsCount.textContent = count;
+
+  // Remove invalid selections
+  for (const idx of selectedSegments) {
+    if (idx >= count) selectedSegments.delete(idx);
+  }
+
+  selectAllBtn.disabled = count === 0;
+  // Update select-all label
+  const allSelected = count > 0 && selectedSegments.size === count;
+  selectAllBtn.textContent = allSelected ? '全解除' : '全選択';
+
+  for (let i = 0; i < count; i++) {
+    const start = boundaries[i];
+    const end   = boundaries[i + 1];
+    const dur   = end - start;
+    const color = COLORS[i % COLORS.length];
+
+    const card = document.createElement('div');
+    card.className = 'segment-card' + (selectedSegments.has(i) ? ' selected' : '');
+    card.id = 'seg-card-' + i;
+
+    // Checkbox indicator
+    const checkbox = document.createElement('div');
+    checkbox.className = 'segment-checkbox';
+    checkbox.textContent = selectedSegments.has(i) ? '✓' : '';
+
+    const colorBar = document.createElement('div');
+    colorBar.className = 'segment-color';
+    colorBar.style.background = color;
+
+    const info = document.createElement('div');
+    info.className = 'segment-info';
+
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.className = 'segment-name-input';
+    nameInput.value = segmentNames[i] ?? `Segment ${i + 1}`;
+    nameInput.placeholder = `Segment ${i + 1}`;
+    // Stop card click from toggling selection when user clicks the input
+    nameInput.addEventListener('click', (e) => e.stopPropagation());
+    nameInput.addEventListener('change', (e) => {
+      segmentNames[i] = e.target.value.trim() || `Segment ${i + 1}`;
+    });
+    nameInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') nameInput.blur();
+      e.stopPropagation(); // don't trigger keyboard shortcuts
+    });
+
+    const timesDiv = document.createElement('div');
+    timesDiv.className = 'segment-times';
+    timesDiv.textContent = `${formatTime(start)} → ${formatTime(end)}`;
+
+    const progWrap = document.createElement('div');
+    progWrap.className = 'segment-progress';
+    progWrap.id = 'seg-prog-' + i;
+    const progBar = document.createElement('div');
+    progBar.className = 'segment-progress-bar';
+    progBar.id = 'seg-prog-bar-' + i;
+    progWrap.appendChild(progBar);
+
+    info.appendChild(nameInput);
+    info.appendChild(timesDiv);
+    info.appendChild(progWrap);
+
+    const durLabel = document.createElement('div');
+    durLabel.className = 'segment-duration';
+    durLabel.textContent = formatTime(dur);
+
+    card.appendChild(checkbox);
+    card.appendChild(colorBar);
+    card.appendChild(info);
+    card.appendChild(durLabel);
+    segmentsList.appendChild(card);
+
+    // Click card to toggle selection
+    card.addEventListener('click', () => {
+      if (selectedSegments.has(i)) {
+        selectedSegments.delete(i);
+      } else {
+        selectedSegments.add(i);
+      }
+      renderSegments();
+      updateSelectionUI();
+    });
+  }
+
+  updateSelectionUI();
+}
+
+// Select all / deselect all
+selectAllBtn.addEventListener('click', () => {
+  const boundaries = [0, ...splitPoints, videoDuration];
+  const count = boundaries.length - 1;
+  const allSelected = selectedSegments.size === count;
+  if (allSelected) {
+    selectedSegments.clear();
+  } else {
+    for (let i = 0; i < count; i++) selectedSegments.add(i);
+  }
+  renderSegments();
+  updateSelectionUI();
+});
+
+// ─── Keyboard shortcuts ──────────────────────────────────────────────────────
+document.addEventListener('keydown', (e) => {
+  // Ignore when typing in an input
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  if (!videoFile) return;
+
+  switch (e.code) {
+    case 'Space':
+      e.preventDefault();
+      togglePlay();
+      break;
+    case 'KeyS':
+    case 'KeyM':
+      e.preventDefault();
+      addSplitAtCurrentTime();
+      break;
+    case 'ArrowLeft':
+      e.preventDefault();
+      videoEl.currentTime = Math.max(0, videoEl.currentTime - 0.3);
+      break;
+    case 'ArrowRight':
+      e.preventDefault();
+      videoEl.currentTime = Math.min(videoDuration, videoEl.currentTime + 0.3);
+      break;
+    case 'KeyZ':
+      e.preventDefault();
+      if (splitPoints.length > 0) {
+        // Undo last added (highest index)
+        const removed = splitPoints.pop();
+        infoSplits.textContent = splitPoints.length;
+        renderMarkers();
+        renderSegments();
+        showToast(`Split at ${formatTime(removed)} undone`);
+      }
+      break;
+  }
+});
+
+// Resize: rebuild labels
+window.addEventListener('resize', () => {
+  if (videoDuration) buildTimelineLabels();
+});
+
+// ─── FFmpeg loading ──────────────────────────────────────────────────────────
+let fetchUtilLib = null;
+let ffmpegInputName = null;  // track written input file
+
+async function loadFFmpeg() {
+  setFFmpegStatus('Loading…', 'loading');
+  try {
+    const { createFFmpeg, fetchFile } = FFmpeg;
+    fetchUtilLib = { fetchFile };
+    ffmpeg = createFFmpeg({
+      corePath: 'https://unpkg.com/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js',
+      log: false,
+    });
+    await ffmpeg.load();
+    ffmpegReady = true;
+    setFFmpegStatus('Ready', 'ready');
+    renderSegments();
+    updateSelectionUI();
+    showToast('FFmpeg loaded — ready to export', 'success');
+  } catch (err) {
+    console.error('FFmpeg load error:', err);
+    setFFmpegStatus('Error', 'error');
+    showToast('FFmpeg failed to load. Export unavailable.', 'error', 5000);
+  }
+}
+
+loadFFmpeg();
+
+// ─── Export ──────────────────────────────────────────────────────────────────
+function getOutputFilename(index) {
+  const customName = (segmentNames[index] ?? `Segment ${index + 1}`).trim();
+  // Sanitize for use as a filename
+  const safeName = customName.replace(/[/\\:*?"<>|]/g, '_');
+  return `${safeName}.mp4`;
+}
+
+async function exportSegment(index, start, end, silent = false) {
+  if (!ffmpegReady || !videoFile) return;
+  if (isExporting && !silent) {
+    showToast('Export already in progress', 'error');
+    return;
+  }
+
+  const inputName  = 'input_' + videoFile.name.replace(/[^a-zA-Z0-9.]/g, '_');
+  const outputName = 'out_seg_' + index + '.mp4';
+  const duration   = end - start;
+
+  const segProgWrap = document.getElementById('seg-prog-' + index);
+  const segProgBar  = document.getElementById('seg-prog-bar-' + index);
+  const segExpBtn   = document.getElementById('seg-exp-btn-' + index);
+  if (segProgWrap) segProgWrap.classList.add('active');
+  if (segProgBar)  segProgBar.style.width = '5%';
+  if (segExpBtn)   segExpBtn.disabled = true;
+
+  try {
+    // Write input file only once per video file
+    if (ffmpegInputName !== inputName) {
+      if (ffmpegInputName) {
+        try { ffmpeg.FS('unlink', ffmpegInputName); } catch(_) {}
+      }
+      ffmpeg.FS('writeFile', inputName, await fetchUtilLib.fetchFile(videoFile));
+      ffmpegInputName = inputName;
+    }
+
+    if (segProgBar) segProgBar.style.width = '30%';
+
+    // Progress tracking via log parsing
+    ffmpeg.setLogger(({ message }) => {
+      if (message.includes('time=')) {
+        const match = message.match(/time=(\d+):(\d+):([\d.]+)/);
+        if (match) {
+          const elapsed = parseInt(match[1]) * 3600 + parseInt(match[2]) * 60 + parseFloat(match[3]);
+          const pct = Math.min(95, 30 + (elapsed / duration) * 65);
+          if (segProgBar) segProgBar.style.width = pct + '%';
+        }
+      }
+    });
+
+    await ffmpeg.run(
+      '-ss', String(start),
+      '-i', inputName,
+      '-t', String(duration),
+      '-c', 'copy',
+      '-avoid_negative_ts', 'make_zero',
+      outputName,
+    );
+
+    ffmpeg.setLogger(() => {});  // reset logger
+
+    if (segProgBar) segProgBar.style.width = '100%';
+
+    // Read output and trigger download
+    const data = ffmpeg.FS('readFile', outputName);
+    ffmpeg.FS('unlink', outputName);
+
+    const blob = new Blob([data.buffer], { type: 'video/mp4' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = getOutputFilename(index);
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+
+    if (!silent) showToast(`Segment ${index + 1} downloaded`, 'success');
+
+  } catch (err) {
+    console.error('Export error:', err);
+    if (!silent) showToast(`Export failed: ${err.message}`, 'error', 5000);
+    if (segProgBar) segProgBar.style.width = '0%';
+  } finally {
+    if (segProgWrap) setTimeout(() => {
+      segProgWrap.classList.remove('active');
+      if (segProgBar) segProgBar.style.width = '0%';
+    }, 1200);
+    if (segExpBtn) segExpBtn.disabled = false;
+  }
+}
+
+exportAllBtn.addEventListener('click', async () => {
+  if (!ffmpegReady || !videoFile || isExporting || selectedSegments.size === 0) return;
+  isExporting = true;
+  exportAllBtn.disabled = true;
+
+  const boundaries = [0, ...splitPoints, videoDuration];
+  const indices = [...selectedSegments].sort((a, b) => a - b);
+  const total = indices.length;
+
+  globalProgressWrap.classList.add('active');
+  globalProgressBar.style.width = '0%';
+  globalProgressLabel.textContent = `保存中… 0 / ${total}`;
+
+  for (let n = 0; n < total; n++) {
+    const i = indices[n];
+    globalProgressLabel.textContent = `保存中… ${n + 1} / ${total}`;
+    globalProgressBar.style.width = ((n / total) * 100) + '%';
+    await exportSegment(i, boundaries[i], boundaries[i + 1], true);
+  }
+
+  globalProgressBar.style.width = '100%';
+  globalProgressLabel.textContent = `完了 — ${total}件保存しました`;
+  setTimeout(() => {
+    globalProgressWrap.classList.remove('active');
+    globalProgressBar.style.width = '0%';
+  }, 3000);
+
+  isExporting = false;
+  showToast(`${total}件のセグメントを保存しました`, 'success');
+  updateSelectionUI();
+});
+</script>
+
+</body>
+</html>
