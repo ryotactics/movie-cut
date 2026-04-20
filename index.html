@@ -1243,7 +1243,7 @@ function buildTimelineLabels() {
 }
 
 function updatePlayhead() {
-  if (!videoDuration) return;
+  if (!videoDuration || isScrubbing) return;
   const pct = (videoEl.currentTime / videoDuration) * 100;
   playhead.style.left = pct + '%';
 }
@@ -1294,6 +1294,7 @@ timelineTrack.addEventListener('mousedown', (e) => {
       e.target.classList.contains('marker-delete')) return;
   e.preventDefault();
 
+  isScrubbing = true;
   const startX = e.clientX;
   let isDragging = false;
 
@@ -1307,18 +1308,17 @@ timelineTrack.addEventListener('mousedown', (e) => {
       isDragging = true;
       wasPlayingBeforeScrub = !videoEl.paused;
       if (wasPlayingBeforeScrub) videoEl.pause();
-      applySeek(initPct * videoDuration); // seek from initial touch position
+      applySeek(initPct * videoDuration);
     }
     if (isDragging) seekToPositionX(ev.clientX);
   };
   const onUp = (ev) => {
+    isScrubbing = false;
     document.removeEventListener('mousemove', onMove);
     document.removeEventListener('mouseup', onUp);
     if (isDragging) {
-      isScrubbing = false;
       if (wasPlayingBeforeScrub) videoEl.play();
     } else {
-      // Click: seek + toggle segment selection
       applySeek(initPct * videoDuration);
       toggleSegmentAtTime(initPct * videoDuration);
     }
@@ -1333,6 +1333,7 @@ timelineTrack.addEventListener('touchstart', (e) => {
       e.target.classList.contains('marker-delete')) return;
   e.preventDefault();
 
+  isScrubbing = true;
   const startX = e.touches[0].clientX;
   let isDragging = false;
 
@@ -1348,18 +1349,17 @@ timelineTrack.addEventListener('touchstart', (e) => {
       isDragging = true;
       wasPlayingBeforeScrub = !videoEl.paused;
       if (wasPlayingBeforeScrub) videoEl.pause();
-      applySeek(initPct * videoDuration); // seek from initial touch position
+      applySeek(initPct * videoDuration);
     }
     if (isDragging) seekToPositionX(cx);
   };
   const onEnd = () => {
+    isScrubbing = false;
     document.removeEventListener('touchmove', onMove);
     document.removeEventListener('touchend', onEnd);
     if (isDragging) {
-      isScrubbing = false;
       if (wasPlayingBeforeScrub) videoEl.play();
     } else {
-      // Tap: seek + toggle segment selection
       applySeek(initPct * videoDuration);
       toggleSegmentAtTime(initPct * videoDuration);
     }
