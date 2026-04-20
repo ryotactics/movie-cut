@@ -40,7 +40,7 @@
     /* ===== LAYOUT ===== */
     #app {
       display: grid;
-      grid-template-rows: 48px 1fr 180px 320px;
+      grid-template-rows: 48px 1fr 180px 380px;
       grid-template-columns: 1fr 320px;
       grid-template-areas:
         "header  header"
@@ -283,8 +283,14 @@
       top: 0;
       height: 100%;
       border-right: 1px solid var(--bg);
-      opacity: 0.55;
-      pointer-events: none;
+      opacity: 0.45;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    .tl-segment:hover { opacity: 0.7; }
+    .tl-segment.seg-selected {
+      opacity: 0.9;
+      box-shadow: inset 0 0 0 2px rgba(255,255,255,0.4);
     }
 
     /* playhead */
@@ -410,8 +416,8 @@
       overflow-y: auto;
       flex: 1;
       padding: 6px 16px 10px;
-      display: flex;
-      flex-wrap: wrap;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
       gap: 8px;
       align-content: flex-start;
     }
@@ -766,9 +772,9 @@
       #timeline-area { min-height: 120px; }
       #timeline-track { height: 40px; }
 
-      /* Segments horizontal scroll → vertical wrap */
-      #segments-list { flex-direction: column; flex-wrap: nowrap; }
-      .segment-card { min-width: 0; width: 100%; }
+      /* Segments: single column on mobile */
+      #segments-list { grid-template-columns: 1fr; }
+      .segment-card { min-width: 0; }
 
       /* Sidebar becomes a bottom bar */
       #sidebar {
@@ -1234,9 +1240,35 @@ timelineTrack.addEventListener('mousedown', (e) => {
   if (e.target.classList.contains('split-marker') ||
       e.target.classList.contains('marker-handle') ||
       e.target.classList.contains('marker-delete')) return;
-  startScrub(e.clientX);
-  const onMove = (ev) => seekToPositionX(ev.clientX);
-  const onUp   = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); endScrub(); };
+  e.preventDefault();
+
+  const startX = e.clientX;
+  let isDragging = false;
+
+  const onMove = (ev) => {
+    if (!isDragging && Math.abs(ev.clientX - startX) > 4) {
+      isDragging = true;
+      wasPlayingBeforeScrub = !videoEl.paused;
+      if (wasPlayingBeforeScrub) videoEl.pause();
+    }
+    if (isDragging) seekToPositionX(ev.clientX);
+  };
+  const onUp = (ev) => {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    if (isDragging) {
+      isScrubbing = false;
+      if (wasPlayingBeforeScrub) videoEl.play();
+    } else {
+      // Click: seek + toggle segment selection
+      const rect = timelineTrack.getBoundingClientRect();
+      const pct = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
+      const t = pct * videoDuration;
+      playhead.style.left = (pct * 100) + '%';
+      applySeek(t);
+      toggleSegmentAtTime(t);
+    }
+  };
   document.addEventListener('mousemove', onMove);
   document.addEventListener('mouseup', onUp);
 });
@@ -1246,9 +1278,35 @@ timelineTrack.addEventListener('touchstart', (e) => {
       e.target.classList.contains('marker-handle') ||
       e.target.classList.contains('marker-delete')) return;
   e.preventDefault();
-  startScrub(e.touches[0].clientX);
-  const onMove = (ev) => { ev.preventDefault(); seekToPositionX(ev.touches[0].clientX); };
-  const onEnd  = () => { document.removeEventListener('touchmove', onMove); document.removeEventListener('touchend', onEnd); endScrub(); };
+
+  const startX = e.touches[0].clientX;
+  let isDragging = false;
+
+  const onMove = (ev) => {
+    ev.preventDefault();
+    if (!isDragging && Math.abs(ev.touches[0].clientX - startX) > 8) {
+      isDragging = true;
+      wasPlayingBeforeScrub = !videoEl.paused;
+      if (wasPlayingBeforeScrub) videoEl.pause();
+    }
+    if (isDragging) seekToPositionX(ev.touches[0].clientX);
+  };
+  const onEnd = () => {
+    document.removeEventListener('touchmove', onMove);
+    document.removeEventListener('touchend', onEnd);
+    if (isDragging) {
+      isScrubbing = false;
+      if (wasPlayingBeforeScrub) videoEl.play();
+    } else {
+      // Tap: seek + toggle segment selection
+      const rect = timelineTrack.getBoundingClientRect();
+      const pct = Math.max(0, Math.min(1, (startX - rect.left) / rect.width));
+      const t = pct * videoDuration;
+      playhead.style.left = (pct * 100) + '%';
+      applySeek(t);
+      toggleSegmentAtTime(t);
+    }
+  };
   document.addEventListener('touchmove', onMove, { passive: false });
   document.addEventListener('touchend', onEnd);
 }, { passive: false });
@@ -1366,13 +1424,14 @@ function renderTrackFills() {
     seg.className = 'tl-segment';
     seg.style.left  = (start / videoDuration * 100) + '%';
     seg.style.width = ((end - start) / videoDuration * 100) + '%';
+    seg.dataset.index = i;
     if (excludedSegments.has(i)) {
       // Excluded: dark hatched pattern
       seg.style.background = 'repeating-linear-gradient(45deg, #1a1d27 0px, #1a1d27 4px, #2e3350 4px, #2e3350 8px)';
       seg.style.opacity = '0.6';
     } else {
       seg.style.background = COLORS[i % COLORS.length];
-      seg.style.opacity = '';
+      if (selectedSegments.has(i)) seg.classList.add('seg-selected');
     }
     timelineTrack.insertBefore(seg, playhead);
   }
@@ -1422,6 +1481,23 @@ function toggleExcludeSegment(index) {
   renderSegments();
   renderTrackFills();
   updateSelectionUI();
+}
+
+// ─── Toggle segment selection by clicking on timeline ────────────────────────
+function toggleSegmentAtTime(t) {
+  const boundaries = [0, ...splitPoints, videoDuration];
+  for (let i = 0; i < boundaries.length - 1; i++) {
+    if (t >= boundaries[i] && t < boundaries[i + 1]) {
+      if (!excludedSegments.has(i)) {
+        if (selectedSegments.has(i)) selectedSegments.delete(i);
+        else selectedSegments.add(i);
+        renderSegments();
+        renderTrackFills();
+        updateSelectionUI();
+      }
+      break;
+    }
+  }
 }
 
 // ─── Segments list ───────────────────────────────────────────────────────────
@@ -1567,6 +1643,7 @@ function renderSegments() {
         selectedSegments.add(i);
       }
       renderSegments();
+      renderTrackFills();
       updateSelectionUI();
     });
   }
@@ -1585,6 +1662,7 @@ selectAllBtn.addEventListener('click', () => {
     for (let i = 0; i < count; i++) { if (!excludedSegments.has(i)) selectedSegments.add(i); }
   }
   renderSegments();
+  renderTrackFills();
   updateSelectionUI();
 });
 
