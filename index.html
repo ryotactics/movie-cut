@@ -746,7 +746,7 @@
       html, body { overflow: auto; height: auto; }
 
       #app {
-        grid-template-rows: 48px auto 120px auto auto;
+        grid-template-rows: 44px auto 90px auto auto;
         grid-template-columns: 1fr;
         grid-template-areas:
           "header"
@@ -758,40 +758,71 @@
         min-height: 100dvh;
       }
 
+      /* ── Header ── */
+      #header { padding: 0 12px; gap: 8px; height: 44px; }
+      #file-name-label { display: none; }
+      #header-actions { gap: 6px; }
+      #change-file-btn { padding: 5px 10px; font-size: 12px; }
+      #add-split-header-btn { padding: 5px 10px; font-size: 12px; }
+
+      /* ── Drop zone ── */
       #drop-zone h2 { font-size: 18px; }
 
-      #player-area { min-height: 200px; max-height: 40vh; }
-
-      /* Always show controls on mobile */
-      #controls { opacity: 1 !important; }
-
-      /* Hide volume on mobile (no need) */
+      /* ── Player ── */
+      #player-area { min-height: 200px; max-height: 42vh; }
+      #controls { opacity: 1 !important; padding: 8px 12px 10px; gap: 8px; }
       #volume-slider { display: none; }
+      #add-split-btn-ctrl { margin-left: auto; }
+      .time-display { font-size: 11px; }
 
-      /* Bigger timeline hit area */
-      #timeline-area { min-height: 120px; }
-      #timeline-track { height: 40px; }
+      /* ── Timeline ── */
+      #timeline-area { padding: 8px 12px; gap: 4px; min-height: 90px; }
+      #timeline-labels { height: 13px; }
+      .tl-label { font-size: 9px; }
+      #timeline-track-wrap { height: 44px; }
+      #timeline-track { height: 32px; top: 12px; }
+      #timeline-actions { display: none; }
 
-      /* Segments: single column on mobile */
-      #segments-list { grid-template-columns: 1fr; }
-      .segment-card { min-width: 0; }
+      /* ── Segments ── */
+      #segments-area { min-height: 0; }
+      #segments-header { padding: 6px 12px; }
+      #segments-list {
+        grid-template-columns: 1fr;
+        padding: 6px 12px 10px;
+        gap: 6px;
+      }
+      .segment-card {
+        min-width: 0;
+        padding: 10px 12px;
+        gap: 8px;
+      }
+      .segment-color { height: 28px; }
+      .segment-name-input { font-size: 13px; }
+      .segment-times { font-size: 11px; }
+      .segment-duration { display: none; }
+      .segment-play-btn { width: 34px; height: 34px; font-size: 13px; flex-shrink: 0; }
+      .segment-delete-btn { width: 28px; height: 28px; font-size: 14px; }
+      .segment-checkbox { width: 18px; height: 18px; font-size: 11px; }
 
-      /* Sidebar becomes a bottom bar */
+      /* ── Sidebar → thin export bar ── */
       #sidebar {
         border-left: none;
         border-top: 1px solid var(--border);
         overflow: visible;
       }
-      #sidebar-content { flex-direction: row; flex-wrap: wrap; gap: 8px; padding: 12px; }
-      .info-row { flex: 1 0 40%; }
+      #sidebar-header { display: none; }
+      #sidebar-content {
+        flex-direction: row;
+        flex-wrap: wrap;
+        padding: 10px 12px;
+        gap: 8px;
+      }
+      .info-row { display: none; }
       .divider { display: none; }
       #keyboard-shortcuts { display: none; }
-      #export-all-btn { flex: 1 0 100%; }
-
-      /* Bigger touch targets */
-      .btn { padding: 10px 16px; font-size: 14px; }
-      .segment-play-btn { width: 36px; height: 36px; font-size: 14px; }
-      .segment-checkbox { width: 20px; height: 20px; }
+      #sidebar-content > div:last-of-type { display: none; } /* stream copy note */
+      #global-progress-wrap { flex: 1 0 100%; }
+      #export-all-btn { flex: 1 0 100%; justify-content: center; padding: 13px 16px; font-size: 15px; }
     }
 
     /* ===== SCROLLBAR ===== */
