@@ -702,6 +702,59 @@
     .toast.success { border-color: var(--success); color: var(--success); }
     .toast.error   { border-color: var(--danger);  color: var(--danger); }
 
+    /* ===== MOBILE ===== */
+    @media (max-width: 768px) {
+      html, body { overflow: auto; height: auto; }
+
+      #app {
+        grid-template-rows: 48px auto 120px auto auto;
+        grid-template-columns: 1fr;
+        grid-template-areas:
+          "header"
+          "player"
+          "timeline"
+          "segments"
+          "sidebar";
+        height: auto;
+        min-height: 100dvh;
+      }
+
+      #drop-zone h2 { font-size: 18px; }
+
+      #player-area { min-height: 200px; max-height: 40vh; }
+
+      /* Always show controls on mobile */
+      #controls { opacity: 1 !important; }
+
+      /* Hide volume on mobile (no need) */
+      #volume-slider { display: none; }
+
+      /* Bigger timeline hit area */
+      #timeline-area { min-height: 120px; }
+      #timeline-track { height: 40px; }
+
+      /* Segments horizontal scroll → vertical wrap */
+      #segments-list { flex-direction: column; flex-wrap: nowrap; }
+      .segment-card { min-width: 0; width: 100%; }
+
+      /* Sidebar becomes a bottom bar */
+      #sidebar {
+        border-left: none;
+        border-top: 1px solid var(--border);
+        overflow: visible;
+      }
+      #sidebar-content { flex-direction: row; flex-wrap: wrap; gap: 8px; padding: 12px; }
+      .info-row { flex: 1 0 40%; }
+      .divider { display: none; }
+      #keyboard-shortcuts { display: none; }
+      #export-all-btn { flex: 1 0 100%; }
+
+      /* Bigger touch targets */
+      .btn { padding: 10px 16px; font-size: 14px; }
+      .segment-play-btn { width: 36px; height: 36px; font-size: 14px; }
+      .segment-checkbox { width: 20px; height: 20px; }
+    }
+
     /* ===== SCROLLBAR ===== */
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
@@ -1120,41 +1173,51 @@ function applySeek(t) {
   if (!seekBusy) doSeek();
 }
 
-// Click / drag on timeline to seek
+// Click / drag on timeline to seek (mouse + touch)
+function startScrub(clientX) {
+  isScrubbing = true;
+  wasPlayingBeforeScrub = !videoEl.paused;
+  if (wasPlayingBeforeScrub) videoEl.pause();
+  seekToPositionX(clientX);
+}
+function endScrub() {
+  isScrubbing = false;
+  if (wasPlayingBeforeScrub) videoEl.play();
+}
+
 timelineTrack.addEventListener('mousedown', (e) => {
   if (e.target.classList.contains('split-marker') ||
       e.target.classList.contains('marker-handle') ||
       e.target.classList.contains('marker-delete')) return;
-
-  isScrubbing = true;
-  wasPlayingBeforeScrub = !videoEl.paused;
-  if (wasPlayingBeforeScrub) videoEl.pause();
-
-  seekToPosition(e);
-
-  const onMove = (ev) => seekToPosition(ev);
-  const onUp   = () => {
-    document.removeEventListener('mousemove', onMove);
-    document.removeEventListener('mouseup', onUp);
-    isScrubbing = false;
-    if (wasPlayingBeforeScrub) videoEl.play();
-  };
+  startScrub(e.clientX);
+  const onMove = (ev) => seekToPositionX(ev.clientX);
+  const onUp   = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); endScrub(); };
   document.addEventListener('mousemove', onMove);
   document.addEventListener('mouseup', onUp);
 });
 
-function seekToPosition(e) {
+timelineTrack.addEventListener('touchstart', (e) => {
+  if (e.target.classList.contains('split-marker') ||
+      e.target.classList.contains('marker-handle') ||
+      e.target.classList.contains('marker-delete')) return;
+  e.preventDefault();
+  startScrub(e.touches[0].clientX);
+  const onMove = (ev) => { ev.preventDefault(); seekToPositionX(ev.touches[0].clientX); };
+  const onEnd  = () => { document.removeEventListener('touchmove', onMove); document.removeEventListener('touchend', onEnd); endScrub(); };
+  document.addEventListener('touchmove', onMove, { passive: false });
+  document.addEventListener('touchend', onEnd);
+}, { passive: false });
+
+function seekToPositionX(clientX) {
   const rect = timelineTrack.getBoundingClientRect();
-  let pct = (e.clientX - rect.left) / rect.width;
+  let pct = (clientX - rect.left) / rect.width;
   pct = Math.max(0, Math.min(1, pct));
   const t = pct * videoDuration;
-
-  // Move playhead immediately for instant visual feedback
   playhead.style.left = (pct * 100) + '%';
   timeDisplay.textContent = formatTime(t) + ' / ' + formatTime(videoDuration);
-
   applySeek(t);
 }
+function seekToPosition(e) { seekToPositionX(e.clientX); }
 
 // ─── Split points ────────────────────────────────────────────────────────────
 function addSplitAtCurrentTime() {
@@ -1215,7 +1278,7 @@ function renderMarkers() {
     marker.appendChild(handle);
     marker.appendChild(delBtn);
 
-    // Drag
+    // Drag (mouse)
     marker.addEventListener('mousedown', (e) => {
       if (e.target === delBtn) return;
       e.preventDefault();
@@ -1224,6 +1287,15 @@ function renderMarkers() {
       dragStartX     = e.clientX;
       dragStartTime  = splitPoints[i];
     });
+    // Drag (touch)
+    marker.addEventListener('touchstart', (e) => {
+      if (e.target === delBtn) return;
+      e.preventDefault();
+      e.stopPropagation();
+      draggingMarker = { el: marker, index: i };
+      dragStartX     = e.touches[0].clientX;
+      dragStartTime  = splitPoints[i];
+    }, { passive: false });
 
     // Right-click to delete
     marker.addEventListener('contextmenu', (e) => {
@@ -1255,15 +1327,14 @@ function renderTrackFills() {
 }
 
 // ─── Marker dragging ─────────────────────────────────────────────────────────
-document.addEventListener('mousemove', (e) => {
+function handleMarkerDrag(clientX) {
   if (!draggingMarker) return;
   const rect  = timelineTrack.getBoundingClientRect();
-  const dx    = e.clientX - dragStartX;
+  const dx    = clientX - dragStartX;
   const dt    = (dx / rect.width) * videoDuration;
   let newTime = dragStartTime + dt;
   newTime = Math.max(0.05, Math.min(videoDuration - 0.05, newTime));
 
-  // Clamp to not overlap other markers (within 0.1 s)
   const otherTimes = splitPoints.filter((_, idx) => idx !== draggingMarker.index);
   for (const ot of otherTimes) {
     if (Math.abs(newTime - ot) < 0.1) return;
@@ -1271,21 +1342,22 @@ document.addEventListener('mousemove', (e) => {
 
   splitPoints[draggingMarker.index] = newTime;
   splitPoints.sort((a, b) => a - b);
-
-  // Recalculate the dragging marker's new index after sort
-  const newIdx = splitPoints.indexOf(newTime);
-  draggingMarker.index = newIdx;
-
+  draggingMarker.index = splitPoints.indexOf(newTime);
   renderMarkers();
   renderSegments();
-});
+}
 
-document.addEventListener('mouseup', () => {
+function endMarkerDrag() {
   if (draggingMarker) {
     infoSplits.textContent = splitPoints.length;
     draggingMarker = null;
   }
-});
+}
+
+document.addEventListener('mousemove', (e) => handleMarkerDrag(e.clientX));
+document.addEventListener('mouseup', endMarkerDrag);
+document.addEventListener('touchmove', (e) => { if (draggingMarker) { e.preventDefault(); handleMarkerDrag(e.touches[0].clientX); } }, { passive: false });
+document.addEventListener('touchend', endMarkerDrag);
 
 // ─── Segments list ───────────────────────────────────────────────────────────
 function updateSelectionUI() {
