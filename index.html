@@ -1775,13 +1775,21 @@ sidebarResizeHandle.addEventListener('mousedown', (e) => {
   sidebarResizeHandle.classList.add('resizing');
   const startX = e.clientX;
   const startW = document.getElementById('sidebar').offsetWidth;
+  let pendingW = null;
+  let rafId = null;
 
   const onMove = (ev) => {
-    const newW = Math.max(200, Math.min(500, startW - (ev.clientX - startX)));
-    document.documentElement.style.setProperty('--sidebar-w', newW + 'px');
+    pendingW = Math.max(200, Math.min(500, startW - (ev.clientX - startX)));
+    if (!rafId) {
+      rafId = requestAnimationFrame(() => {
+        document.documentElement.style.setProperty('--sidebar-w', pendingW + 'px');
+        rafId = null;
+      });
+    }
   };
   const onUp = () => {
     sidebarResizeHandle.classList.remove('resizing');
+    if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
     document.removeEventListener('mousemove', onMove);
     document.removeEventListener('mouseup', onUp);
     if (videoDuration) buildTimelineLabels();
