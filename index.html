@@ -759,6 +759,23 @@
     .toast.success { border-color: var(--success); color: var(--success); }
     .toast.error   { border-color: var(--danger);  color: var(--danger); }
 
+    .toast-save-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      margin-left: 10px;
+      padding: 3px 10px;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 5px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .toast-save-btn:hover { background: #7080f5; }
+
     /* ===== MOBILE ===== */
     @media (max-width: 768px) {
       html, body { overflow: auto; height: auto; }
@@ -1855,6 +1872,75 @@ async function loadFFmpeg() {
 
 loadFFmpeg();
 
+// ─── Save / Share helper ─────────────────────────────────────────────────────
+const isMobile = () => navigator.maxTouchPoints > 0;
+
+async function saveFile(blob, filename, segNum, silent = false) {
+  // Desktop: File System Access API (Chrome/Edge)
+  if (!isMobile() && window.showSaveFilePicker) {
+    try {
+      const handle = await window.showSaveFilePicker({
+        suggestedName: filename,
+        types: [{ description: 'MP4 Video', accept: { 'video/mp4': ['.mp4'] } }],
+      });
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      if (!silent) showToast(`Segment ${segNum} saved`, 'success');
+      return;
+    } catch (e) {
+      if (e.name === 'AbortError') return;
+      // fall through
+    }
+  }
+
+  // Mobile: show tap-to-save toast (navigator.share requires fresh user gesture)
+  if (isMobile() && navigator.canShare) {
+    const file = new File([blob], filename, { type: 'video/mp4' });
+    if (navigator.canShare({ files: [file] })) {
+      showSaveToast(file, filename, segNum);
+      return;
+    }
+  }
+
+  // Fallback: auto-download link
+  const url = URL.createObjectURL(blob);
+  const a   = document.createElement('a');
+  a.href     = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  if (!silent) showToast(`Segment ${segNum} downloaded`, 'success');
+}
+
+function showSaveToast(file, filename, segNum) {
+  const el = document.createElement('div');
+  el.className = 'toast show';
+  el.style.pointerEvents = 'auto';
+
+  const msg = document.createTextNode(`Segment ${segNum} ready — `);
+  const btn = document.createElement('button');
+  btn.className = 'toast-save-btn';
+  btn.textContent = '↓ 保存する';
+
+  btn.addEventListener('click', async () => {
+    try {
+      await navigator.share({ files: [file], title: filename });
+      el.remove();
+    } catch (e) {
+      if (e.name !== 'AbortError') showToast('保存に失敗しました', 'error');
+    }
+  });
+
+  el.appendChild(msg);
+  el.appendChild(btn);
+  toastContainer.appendChild(el);
+  // Auto-remove after 30s
+  setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 300); }, 30000);
+}
+
 // ─── Export ──────────────────────────────────────────────────────────────────
 function getOutputFilename(index) {
   const customName = (segmentNames[index] ?? `Segment ${index + 1}`).trim();
@@ -1922,15 +2008,10 @@ async function exportSegment(index, start, end, silent = false) {
     const data = ffmpeg.FS('readFile', outputName);
     ffmpeg.FS('unlink', outputName);
 
-    const blob = new Blob([data.buffer], { type: 'video/mp4' });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
-    a.href     = url;
-    a.download = getOutputFilename(index);
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    const blob     = new Blob([data.buffer], { type: 'video/mp4' });
+    const filename = getOutputFilename(index);
 
-    if (!silent) showToast(`Segment ${index + 1} downloaded`, 'success');
+    await saveFile(blob, filename, index + 1, silent);
 
   } catch (err) {
     console.error('Export error:', err);
