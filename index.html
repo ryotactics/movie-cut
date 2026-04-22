@@ -1047,8 +1047,8 @@
         <strong style="color:var(--text); display:block; margin-bottom:6px;">Keyboard shortcuts</strong>
         <kbd>Space</kbd> Play / Pause<br>
         <kbd>S</kbd> / <kbd>M</kbd> Add split point<br>
-        <kbd>←</kbd> / <kbd>→</kbd> Seek ±0.1 s<br>
-        <kbd>⇧←</kbd> / <kbd>⇧→</kbd> Seek ±10 s<br>
+        <kbd>←</kbd> / <kbd>→</kbd> Seek ±10 s<br>
+        <kbd>⇧←</kbd> / <kbd>⇧→</kbd> Seek ±0.1 s<br>
         <kbd>Z</kbd> Undo last split<br>
       </div>
 
@@ -1204,7 +1204,9 @@ dropZone.addEventListener('drop', (e) => {
   e.preventDefault();
   dropZone.classList.remove('drag-over');
   const file = e.dataTransfer.files[0];
-  if (file && file.type.startsWith('video/')) {
+  const isVideo = file && (file.type.startsWith('video/') ||
+    /\.(mp4|mov|mkv|webm|avi|m4v|ts|mts|m2ts|wmv|flv|3gp|mpg|mpeg|ogv|ogg|3g2)$/i.test(file.name));
+  if (isVideo) {
     loadVideoFile(file);
   } else {
     showToast('Please drop a video file', 'error');
@@ -2062,11 +2064,11 @@ document.addEventListener('keydown', (e) => {
       break;
     case 'ArrowLeft':
       e.preventDefault();
-      videoEl.currentTime = Math.max(0, videoEl.currentTime - (e.shiftKey ? 10 : 0.1));
+      videoEl.currentTime = Math.max(0, videoEl.currentTime - (e.shiftKey ? 0.1 : 10));
       break;
     case 'ArrowRight':
       e.preventDefault();
-      videoEl.currentTime = Math.min(videoDuration, videoEl.currentTime + (e.shiftKey ? 10 : 0.1));
+      videoEl.currentTime = Math.min(videoDuration, videoEl.currentTime + (e.shiftKey ? 0.1 : 10));
       break;
     case 'KeyZ':
       e.preventDefault();
