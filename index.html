@@ -1986,7 +1986,7 @@ function getOutputFilename(index) {
 }
 
 async function exportSegment(index, start, end, silent = false) {
-  if (!ffmpegReady || !videoFile) return;
+  if (!ffmpegReady || !videoFile) return silent ? false : undefined;
   if (isExporting && !silent) {
     showToast('Export already in progress', 'error');
     return;
@@ -2028,10 +2028,15 @@ async function exportSegment(index, start, end, silent = false) {
     });
 
     await ffmpeg.run(
+      '-ss', String(Math.max(0, start - 5)),
       '-i', inputName,
-      '-ss', String(start),
+      '-ss', String(start < 5 ? start : 5),
       '-t', String(duration),
-      '-c', 'copy',
+      '-c:v', 'libx264',
+      '-preset', 'ultrafast',
+      '-crf', '18',
+      '-c:a', 'aac',
+      '-b:a', '192k',
       outputName,
     );
 
@@ -2047,11 +2052,13 @@ async function exportSegment(index, start, end, silent = false) {
     const filename = getOutputFilename(index);
 
     await saveFile(blob, filename, index + 1, silent);
+    if (silent) return true;
 
   } catch (err) {
     console.error('Export error:', err);
     if (!silent) showToast(`Export failed: ${err.message}`, 'error', 5000);
     if (segProgBar) segProgBar.style.width = '0%';
+    if (silent) return false;
   } finally {
     if (segProgWrap) setTimeout(() => {
       segProgWrap.classList.remove('active');
@@ -2074,22 +2081,35 @@ exportAllBtn.addEventListener('click', async () => {
   globalProgressBar.style.width = '0%';
   globalProgressLabel.textContent = `保存中… 0 / ${total}`;
 
+  const failedSegments = [];
   for (let n = 0; n < total; n++) {
     const i = indices[n];
     globalProgressLabel.textContent = `保存中… ${n + 1} / ${total}`;
     globalProgressBar.style.width = ((n / total) * 100) + '%';
-    await exportSegment(i, boundaries[i], boundaries[i + 1], true);
+    const succeeded = await exportSegment(i, boundaries[i], boundaries[i + 1], true);
+    if (!succeeded) {
+      const segmentName = (segmentNames[i] ?? `Segment ${i + 1}`).trim() || `Segment ${i + 1}`;
+      failedSegments.push(segmentName);
+    }
   }
 
-  globalProgressBar.style.width = '100%';
-  globalProgressLabel.textContent = `完了 — ${total}件保存しました`;
-  setTimeout(() => {
-    globalProgressWrap.classList.remove('active');
-    globalProgressBar.style.width = '0%';
-  }, 3000);
+  if (failedSegments.length === 0) {
+    globalProgressBar.style.width = '100%';
+    globalProgressLabel.textContent = `完了 — ${total}件保存しました`;
+    setTimeout(() => {
+      globalProgressWrap.classList.remove('active');
+      globalProgressBar.style.width = '0%';
+    }, 3000);
+  } else {
+    globalProgressLabel.textContent = `一部失敗 — ${total - failedSegments.length} / ${total}件保存しました`;
+  }
 
   isExporting = false;
-  showToast(`${total}件のセグメントを保存しました`, 'success');
+  if (failedSegments.length === 0) {
+    showToast(`${total}件のセグメントを保存しました`, 'success');
+  } else {
+    showToast(`${failedSegments.join(', ')} failed to export`, 'error', 7000);
+  }
   updateSelectionUI();
 });
 </script>
