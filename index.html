@@ -1177,9 +1177,55 @@ function showToast(msg, type = '', duration = 2800) {
   }, duration);
 }
 
+function showRestorePrompt(data) {
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.style.cssText = 'max-width:320px; display:flex; flex-direction:column; gap:10px;';
+  el.innerHTML = `
+    <span>前回の作業を再開しますか？ (${data.splitPoints.length}分割点)</span>
+    <div style="display:flex; gap:8px;">
+      <button id="restore-yes" style="flex:1; padding:6px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:13px;">再開する</button>
+      <button id="restore-no"  style="flex:1; padding:6px; background:var(--surface2); color:var(--text); border:none; border-radius:6px; cursor:pointer; font-size:13px;">無視</button>
+    </div>`;
+  toastContainer.appendChild(el);
+  requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('show')));
+  const dismiss = () => { el.classList.remove('show'); setTimeout(() => el.remove(), 300); };
+  el.querySelector('#restore-yes').addEventListener('click', () => { applyAutosave(data); dismiss(); showToast('前回の作業を再開しました'); });
+  el.querySelector('#restore-no').addEventListener('click', dismiss);
+  setTimeout(dismiss, 15000);
+}
+
 function setFFmpegStatus(text, cls) {
   ffmpegStatus.textContent = text;
   ffmpegStatus.className   = 'status-' + cls;
+}
+
+function getFileKey(file) {
+  return `moviecut:${file.name}:${file.size}:${file.lastModified}`;
+}
+
+function saveAutosave() {
+  if (!videoFile) return;
+  try {
+    localStorage.setItem(getFileKey(videoFile), JSON.stringify({
+      version: 1,
+      splitPoints,
+      segmentNames,
+      excludedSegments: [...excludedSegments],
+      selectedSegments: [...selectedSegments],
+    }));
+  } catch (_) {}
+}
+
+function applyAutosave(data) {
+  splitPoints = (data.splitPoints ?? []).filter(t => t > 0 && t < videoDuration);
+  segmentNames = data.segmentNames ?? {};
+  const maxIdx = splitPoints.length;
+  excludedSegments = new Set((data.excludedSegments ?? []).filter(i => i <= maxIdx));
+  selectedSegments = new Set((data.selectedSegments ?? []).filter(i => i <= maxIdx));
+  infoSplits.textContent = splitPoints.length;
+  renderMarkers(); renderSegments(); renderTrackFills();
+  updateSelectionUI(); buildTimelineLabels();
 }
 
 // ─── File loading ────────────────────────────────────────────────────────────
@@ -1278,6 +1324,15 @@ videoEl.addEventListener('loadedmetadata', () => {
   renderSegments();
   updatePlayhead();
   updateSelectionUI();
+  const savedRaw = localStorage.getItem(getFileKey(videoFile));
+  if (savedRaw) {
+    try {
+      const saved = JSON.parse(savedRaw);
+      if (saved.version === 1 && saved.splitPoints?.length > 0) {
+        showRestorePrompt(saved);
+      }
+    } catch (_) {}
+  }
 });
 
 // ─── Playback controls ───────────────────────────────────────────────────────
@@ -1625,6 +1680,7 @@ function addSplitAtCurrentTime() {
   infoSplits.textContent = splitPoints.length;
   renderMarkers();
   renderSegments();
+  saveAutosave();
   showToast(`Split added at ${formatTime(t)}`, 'success');
 }
 
@@ -1637,6 +1693,7 @@ function deleteMarker(index) {
   infoSplits.textContent = splitPoints.length;
   renderMarkers();
   renderSegments();
+  saveAutosave();
   showToast(`Split at ${formatTime(t)} removed`);
 }
 
@@ -1754,6 +1811,7 @@ function endMarkerDrag() {
   if (draggingMarker) {
     infoSplits.textContent = splitPoints.length;
     draggingMarker = null;
+    saveAutosave();
   }
 }
 
@@ -1773,6 +1831,7 @@ function toggleExcludeSegment(index) {
   renderSegments();
   renderTrackFills();
   updateSelectionUI();
+  saveAutosave();
 }
 
 // ─── Toggle segment selection by clicking on timeline ────────────────────────
@@ -1786,6 +1845,7 @@ function toggleSegmentAtTime(t) {
         renderSegments();
         renderTrackFills();
         updateSelectionUI();
+        saveAutosave();
       }
       break;
     }
@@ -1814,9 +1874,14 @@ function renderSegments() {
   segmentsCount.textContent = count;
 
   // Remove invalid selections
+  let removedInvalidSelection = false;
   for (const idx of selectedSegments) {
-    if (idx >= count) selectedSegments.delete(idx);
+    if (idx >= count) {
+      selectedSegments.delete(idx);
+      removedInvalidSelection = true;
+    }
   }
+  if (removedInvalidSelection) saveAutosave();
 
   selectAllBtn.disabled = count === 0;
   // Update select-all label
@@ -1855,6 +1920,7 @@ function renderSegments() {
     nameInput.addEventListener('click', (e) => e.stopPropagation());
     nameInput.addEventListener('change', (e) => {
       segmentNames[i] = e.target.value.trim() || `Segment ${i + 1}`;
+      saveAutosave();
     });
     nameInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') nameInput.blur();
@@ -1953,6 +2019,7 @@ function renderSegments() {
       renderSegments();
       renderTrackFills();
       updateSelectionUI();
+      saveAutosave();
     });
   }
 
@@ -1972,6 +2039,7 @@ selectAllBtn.addEventListener('click', () => {
   renderSegments();
   renderTrackFills();
   updateSelectionUI();
+  saveAutosave();
 });
 
 // ─── Project save / load ────────────────────────────────────────────────────
@@ -2032,6 +2100,7 @@ projectFileInput.addEventListener('change', (e) => {
       renderTrackFills();
       updateSelectionUI();
       buildTimelineLabels();
+      saveAutosave();
       showToast('プロジェクトを読み込みました');
     } catch (err) {
       showToast('プロジェクトの読み込みに失敗しました', 'error');
@@ -2078,6 +2147,7 @@ document.addEventListener('keydown', (e) => {
         infoSplits.textContent = splitPoints.length;
         renderMarkers();
         renderSegments();
+        saveAutosave();
         showToast(`Split at ${formatTime(removed)} undone`);
       }
       break;
