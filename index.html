@@ -2027,9 +2027,16 @@ async function exportSegment(index, start, end, silent = false) {
       }
     });
 
+    // Two-step seek: fast input seek to ~5s before start,
+    // then accurate output seek for the remainder. Gives precise cuts without full decode.
+    const PRE_SEEK = 5;
+    const inputSeek  = Math.max(0, start - PRE_SEEK);
+    const outputSeek = start - inputSeek;
+
     await ffmpeg.run(
-      '-ss', String(start),
+      '-ss', String(inputSeek),
       '-i', inputName,
+      '-ss', String(outputSeek),
       '-t', String(duration),
       '-c', 'copy',
       '-avoid_negative_ts', 'make_zero',
