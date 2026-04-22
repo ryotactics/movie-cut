@@ -375,6 +375,39 @@
       gap: 8px;
     }
 
+    #timeline-zoom-controls {
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+      background: var(--surface2);
+      flex-shrink: 0;
+    }
+
+    .timeline-zoom-btn {
+      min-width: 28px;
+      height: 24px;
+      border: none;
+      border-right: 1px solid var(--border);
+      background: transparent;
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .timeline-zoom-btn:last-child { border-right: none; }
+    .timeline-zoom-btn:hover { background: #2c3050; }
+    .timeline-zoom-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+    #timeline-zoom-reset {
+      min-width: 42px;
+      color: var(--accent);
+      font-variant-numeric: tabular-nums;
+    }
+
     #split-hint {
       margin-left: auto;
       font-size: 11px;
@@ -817,7 +850,8 @@
       .tl-label { font-size: 9px; }
       #timeline-track-wrap { height: 44px; }
       #timeline-track { height: 32px; top: 12px; }
-      #timeline-actions { display: none; }
+      #timeline-actions { display: flex; }
+      #split-hint { display: none; }
 
       /* ── Segments ── */
       #segments-area { min-height: 0; }
@@ -938,6 +972,11 @@
       </div>
     </div>
     <div id="timeline-actions">
+      <div id="timeline-zoom-controls" aria-label="Timeline zoom">
+        <button class="timeline-zoom-btn" id="timeline-zoom-out" title="Zoom out">−</button>
+        <button class="timeline-zoom-btn" id="timeline-zoom-reset" title="Reset zoom">1×</button>
+        <button class="timeline-zoom-btn" id="timeline-zoom-in" title="Zoom in">+</button>
+      </div>
       <span id="split-hint">
         <kbd style="background:var(--surface2);border:1px solid var(--border);border-radius:3px;padding:1px 5px;font-size:10px;font-family:monospace;">S</kbd>
         or
@@ -996,11 +1035,20 @@
 
       <div class="divider"></div>
 
+      <div style="display:flex; gap:6px;">
+        <button class="btn" id="save-project-btn" style="flex:1; font-size:12px;" disabled>💾 保存</button>
+        <button class="btn" id="load-project-btn" style="flex:1; font-size:12px;">📂 読み込み</button>
+      </div>
+      <input type="file" id="project-file-input" accept=".json" style="display:none;">
+
+      <div class="divider"></div>
+
       <div id="keyboard-shortcuts">
         <strong style="color:var(--text); display:block; margin-bottom:6px;">Keyboard shortcuts</strong>
         <kbd>Space</kbd> Play / Pause<br>
         <kbd>S</kbd> / <kbd>M</kbd> Add split point<br>
         <kbd>←</kbd> / <kbd>→</kbd> Seek ±0.1 s<br>
+        <kbd>⇧←</kbd> / <kbd>⇧→</kbd> Seek ±10 s<br>
         <kbd>Z</kbd> Undo last split<br>
       </div>
 
@@ -1051,6 +1099,9 @@ let selectedSegments = new Set();  // indices of selected segments
 let excludedSegments = new Set();  // indices excluded (will not be exported)
 let segmentPlayEnd = null;         // end time of currently previewing segment
 let segmentNames = {};             // index → custom name
+let lastSavedFileHandle = null;
+let zoomLevel = 1;                 // 1 = full view, higher = zoomed in
+let zoomStart = 0;                 // visible window start in seconds
 
 // Drag state for markers
 let draggingMarker = null;   // { el, index }
@@ -1072,12 +1123,18 @@ const addSplitHeaderBtn= document.getElementById('add-split-header-btn');
 const addSplitCtrlBtn  = document.getElementById('add-split-btn-ctrl');
 const timelineTrack    = document.getElementById('timeline-track');
 const timelineLabels   = document.getElementById('timeline-labels');
+const timelineZoomOut  = document.getElementById('timeline-zoom-out');
+const timelineZoomReset= document.getElementById('timeline-zoom-reset');
+const timelineZoomIn   = document.getElementById('timeline-zoom-in');
 const playhead         = document.getElementById('playhead');
 const segmentsList     = document.getElementById('segments-list');
 const segmentsCount    = document.getElementById('segments-count');
 const selectedCount    = document.getElementById('selected-count');
 const selectAllBtn     = document.getElementById('select-all-btn');
 const exportAllBtn     = document.getElementById('export-all-btn');
+const saveProjectBtn   = document.getElementById('save-project-btn');
+const loadProjectBtn   = document.getElementById('load-project-btn');
+const projectFileInput = document.getElementById('project-file-input');
 const ffmpegStatus     = document.getElementById('ffmpeg-status');
 const globalProgressWrap = document.getElementById('global-progress-wrap');
 const globalProgressLabel= document.getElementById('global-progress-label');
@@ -1175,6 +1232,9 @@ function loadVideoFile(file) {
   excludedSegments.clear();
   segmentNames = {};
   ffmpegInputName = null;
+  zoomLevel = 1;
+  zoomStart = 0;
+  updateZoomControls();
 
   const url = URL.createObjectURL(file);
   videoEl.src = url;
@@ -1188,6 +1248,7 @@ function loadVideoFile(file) {
 
   document.getElementById('player-placeholder').style.display = 'none';
   videoEl.style.display = 'block';
+  saveProjectBtn.disabled = false;
 }
 
 // Stop segment preview at end boundary
@@ -1206,6 +1267,8 @@ videoEl.addEventListener('timeupdate', () => {
 
 videoEl.addEventListener('loadedmetadata', () => {
   videoDuration = videoEl.duration;
+  zoomStart = 0;
+  updateZoomControls();
   infoDuration.textContent = formatTime(videoDuration);
   infoResolution.textContent = videoEl.videoWidth + ' × ' + videoEl.videoHeight;
   buildTimelineLabels();
@@ -1240,6 +1303,7 @@ videoEl.addEventListener('pause', () => {
 videoEl.addEventListener('ended', () => { playBtn.textContent = '▶'; });
 
 videoEl.addEventListener('timeupdate', () => {
+  autoPanTimeline();
   updatePlayhead();
   const cur  = videoEl.currentTime;
   const dur  = videoDuration || videoEl.duration || 0;
@@ -1256,21 +1320,98 @@ function togglePlay() {
 }
 
 // ─── Timeline ────────────────────────────────────────────────────────────────
+const ZOOM_LEVELS = [1, 2, 5, 10, 20];
+
+function getVisibleWindowDuration() {
+  if (!videoDuration) return 0;
+  return videoDuration / zoomLevel;
+}
+
+function clampZoomStart(start = zoomStart) {
+  const windowDur = getVisibleWindowDuration();
+  const maxStart = Math.max(0, videoDuration - windowDur);
+  zoomStart = Math.max(0, Math.min(maxStart, start));
+  return zoomStart;
+}
+
+function timeToPercent(t) {
+  const windowDur = videoDuration / zoomLevel;
+  return ((t - zoomStart) / windowDur) * 100;
+}
+
+function percentToTime(pct) {
+  const windowDur = getVisibleWindowDuration();
+  return Math.max(0, Math.min(videoDuration, zoomStart + (pct * windowDur)));
+}
+
+function recenterZoomOn(t) {
+  const windowDur = getVisibleWindowDuration();
+  if (!windowDur) return;
+  clampZoomStart(t - (windowDur / 2));
+}
+
+function renderTimeline() {
+  clampZoomStart();
+  buildTimelineLabels();
+  renderMarkers();
+  updatePlayhead();
+}
+
+function updateZoomControls() {
+  if (!timelineZoomReset) return;
+  const idx = ZOOM_LEVELS.indexOf(zoomLevel);
+  timelineZoomReset.textContent = zoomLevel + '×';
+  timelineZoomOut.disabled = idx <= 0 || !videoDuration;
+  timelineZoomIn.disabled = idx >= ZOOM_LEVELS.length - 1 || !videoDuration;
+}
+
+function setZoomLevel(nextLevel, recenter = true) {
+  if (!ZOOM_LEVELS.includes(nextLevel) || !videoDuration) return;
+  zoomLevel = nextLevel;
+  if (recenter) recenterZoomOn(videoEl.currentTime || 0);
+  clampZoomStart();
+  updateZoomControls();
+  renderTimeline();
+}
+
+function stepZoom(direction) {
+  const idx = ZOOM_LEVELS.indexOf(zoomLevel);
+  const nextIdx = Math.max(0, Math.min(ZOOM_LEVELS.length - 1, idx + direction));
+  setZoomLevel(ZOOM_LEVELS[nextIdx]);
+}
+
+function autoPanTimeline() {
+  if (!videoDuration || zoomLevel === 1 || isScrubbing) return;
+  const windowDur = getVisibleWindowDuration();
+  const cur = videoEl.currentTime;
+  const min = zoomStart + (windowDur * 0.25);
+  const max = zoomStart + (windowDur * 0.75);
+  if (cur < min || cur > max) {
+    recenterZoomOn(cur);
+    buildTimelineLabels();
+    renderMarkers();
+  }
+}
+
 function buildTimelineLabels() {
   timelineLabels.innerHTML = '';
   if (!videoDuration) return;
 
   // Calculate a nice step based on duration
   const trackW = timelineTrack.clientWidth || timelineTrack.offsetWidth || 600;
-  const desiredLabels = Math.min(12, Math.floor(trackW / 60));
-  const rawStep = videoDuration / desiredLabels;
+  const desiredLabels = Math.max(1, Math.min(12, Math.floor(trackW / 60)));
+  const windowDur = getVisibleWindowDuration();
+  const windowEnd = Math.min(videoDuration, zoomStart + windowDur);
+  const rawStep = windowDur / desiredLabels;
 
   // Nice round steps
   const steps = [1,2,5,10,15,20,30,60,120,180,300,600,900,1800,3600];
   let step = steps.find(s => s >= rawStep) || steps[steps.length - 1];
 
-  for (let t = 0; t <= videoDuration; t += step) {
-    const pct = (t / videoDuration) * 100;
+  const firstLabel = Math.ceil(zoomStart / step) * step;
+  for (let t = firstLabel; t <= windowEnd + 0.001; t += step) {
+    if (t < zoomStart - 0.001 || t > windowEnd + 0.001) continue;
+    const pct = timeToPercent(t);
     const label = document.createElement('div');
     label.className = 'tl-label';
     label.style.left = pct + '%';
@@ -1281,7 +1422,7 @@ function buildTimelineLabels() {
 
 function updatePlayhead() {
   if (!videoDuration || isScrubbing) return;
-  const pct = (videoEl.currentTime / videoDuration) * 100;
+  const pct = timeToPercent(videoEl.currentTime);
   playhead.style.left = pct + '%';
 }
 
@@ -1338,6 +1479,7 @@ timelineTrack.addEventListener('mousedown', (e) => {
   // Immediately move playhead to clicked position
   const rect0 = timelineTrack.getBoundingClientRect();
   const initPct = Math.max(0, Math.min(1, (startX - rect0.left) / rect0.width));
+  const initTime = percentToTime(initPct);
   playhead.style.left = (initPct * 100) + '%';
 
   const onMove = (ev) => {
@@ -1345,7 +1487,7 @@ timelineTrack.addEventListener('mousedown', (e) => {
       isDragging = true;
       wasPlayingBeforeScrub = !videoEl.paused;
       if (wasPlayingBeforeScrub) videoEl.pause();
-      applySeek(initPct * videoDuration);
+      applySeek(initTime);
     }
     if (isDragging) seekToPositionX(ev.clientX);
   };
@@ -1356,8 +1498,8 @@ timelineTrack.addEventListener('mousedown', (e) => {
     if (isDragging) {
       if (wasPlayingBeforeScrub) videoEl.play();
     } else {
-      applySeek(initPct * videoDuration);
-      toggleSegmentAtTime(initPct * videoDuration);
+      applySeek(initTime);
+      toggleSegmentAtTime(initTime);
     }
   };
   document.addEventListener('mousemove', onMove);
@@ -1365,6 +1507,10 @@ timelineTrack.addEventListener('mousedown', (e) => {
 });
 
 timelineTrack.addEventListener('touchstart', (e) => {
+  if (e.touches.length === 2) {
+    beginPinchZoom(e);
+    return;
+  }
   if (e.target.classList.contains('split-marker') ||
       e.target.classList.contains('marker-handle') ||
       e.target.classList.contains('marker-delete')) return;
@@ -1377,16 +1523,18 @@ timelineTrack.addEventListener('touchstart', (e) => {
   // Immediately move playhead to touched position
   const rect0 = timelineTrack.getBoundingClientRect();
   const initPct = Math.max(0, Math.min(1, (startX - rect0.left) / rect0.width));
+  const initTime = percentToTime(initPct);
   playhead.style.left = (initPct * 100) + '%';
 
   const onMove = (ev) => {
+    if (ev.touches.length !== 1) return;
     ev.preventDefault();
     const cx = ev.touches[0].clientX;
     if (!isDragging && Math.abs(cx - startX) > 6) {
       isDragging = true;
       wasPlayingBeforeScrub = !videoEl.paused;
       if (wasPlayingBeforeScrub) videoEl.pause();
-      applySeek(initPct * videoDuration);
+      applySeek(initTime);
     }
     if (isDragging) seekToPositionX(cx);
   };
@@ -1397,8 +1545,8 @@ timelineTrack.addEventListener('touchstart', (e) => {
     if (isDragging) {
       if (wasPlayingBeforeScrub) videoEl.play();
     } else {
-      applySeek(initPct * videoDuration);
-      toggleSegmentAtTime(initPct * videoDuration);
+      applySeek(initTime);
+      toggleSegmentAtTime(initTime);
     }
   };
   document.addEventListener('touchmove', onMove, { passive: false });
@@ -1409,12 +1557,54 @@ function seekToPositionX(clientX) {
   const rect = timelineTrack.getBoundingClientRect();
   let pct = (clientX - rect.left) / rect.width;
   pct = Math.max(0, Math.min(1, pct));
-  const t = pct * videoDuration;
+  const t = percentToTime(pct);
   playhead.style.left = (pct * 100) + '%';
   timeDisplay.textContent = formatTime(t) + ' / ' + formatTime(videoDuration);
   applySeek(t);
 }
 function seekToPosition(e) { seekToPositionX(e.clientX); }
+
+timelineZoomOut.addEventListener('click', () => stepZoom(-1));
+timelineZoomIn.addEventListener('click', () => stepZoom(1));
+timelineZoomReset.addEventListener('click', () => setZoomLevel(1));
+
+timelineTrack.addEventListener('wheel', (e) => {
+  if (!videoDuration) return;
+  e.preventDefault();
+  stepZoom(e.deltaY < 0 ? 1 : -1);
+}, { passive: false });
+
+function getTouchDistance(touches) {
+  const dx = touches[0].clientX - touches[1].clientX;
+  const dy = touches[0].clientY - touches[1].clientY;
+  return Math.hypot(dx, dy);
+}
+
+function beginPinchZoom(e) {
+  if (!videoDuration) return;
+  e.preventDefault();
+  const startDistance = getTouchDistance(e.touches);
+  const startZoomIndex = ZOOM_LEVELS.indexOf(zoomLevel);
+
+  const onMove = (ev) => {
+    if (ev.touches.length < 2) return;
+    ev.preventDefault();
+    const ratio = getTouchDistance(ev.touches) / startDistance;
+    const delta = Math.round(Math.log(ratio) / Math.log(1.35));
+    const nextIdx = Math.max(0, Math.min(ZOOM_LEVELS.length - 1, startZoomIndex + delta));
+    if (ZOOM_LEVELS[nextIdx] !== zoomLevel) setZoomLevel(ZOOM_LEVELS[nextIdx]);
+  };
+
+  const onEnd = () => {
+    document.removeEventListener('touchmove', onMove);
+    document.removeEventListener('touchend', onEnd);
+    document.removeEventListener('touchcancel', onEnd);
+  };
+
+  document.addEventListener('touchmove', onMove, { passive: false });
+  document.addEventListener('touchend', onEnd);
+  document.addEventListener('touchcancel', onEnd);
+}
 
 // ─── Split points ────────────────────────────────────────────────────────────
 function addSplitAtCurrentTime() {
@@ -1453,7 +1643,8 @@ function renderMarkers() {
   timelineTrack.querySelectorAll('.split-marker').forEach(el => el.remove());
 
   splitPoints.forEach((t, i) => {
-    const pct = (t / videoDuration) * 100;
+    const pct = timeToPercent(t);
+    if (pct < 0 || pct > 100) return;
     const marker = document.createElement('div');
     marker.className = 'split-marker';
     marker.style.left = pct + '%';
@@ -1511,13 +1702,18 @@ function renderTrackFills() {
   timelineTrack.querySelectorAll('.tl-segment').forEach(el => el.remove());
 
   const boundaries = [0, ...splitPoints, videoDuration];
+  const windowDur = getVisibleWindowDuration();
+  const windowEnd = Math.min(videoDuration, zoomStart + windowDur);
   for (let i = 0; i < boundaries.length - 1; i++) {
     const start = boundaries[i];
     const end   = boundaries[i + 1];
+    if (end <= zoomStart || start >= windowEnd) continue;
+    const visibleStart = Math.max(start, zoomStart);
+    const visibleEnd = Math.min(end, windowEnd);
     const seg   = document.createElement('div');
     seg.className = 'tl-segment';
-    seg.style.left  = (start / videoDuration * 100) + '%';
-    seg.style.width = ((end - start) / videoDuration * 100) + '%';
+    seg.style.left  = timeToPercent(visibleStart) + '%';
+    seg.style.width = (timeToPercent(visibleEnd) - timeToPercent(visibleStart)) + '%';
     seg.dataset.index = i;
     if (excludedSegments.has(i)) {
       // Excluded: dark hatched pattern
@@ -1536,7 +1732,7 @@ function handleMarkerDrag(clientX) {
   if (!draggingMarker) return;
   const rect  = timelineTrack.getBoundingClientRect();
   const dx    = clientX - dragStartX;
-  const dt    = (dx / rect.width) * videoDuration;
+  const dt    = (dx / rect.width) * getVisibleWindowDuration();
   let newTime = dragStartTime + dt;
   newTime = Math.max(0.05, Math.min(videoDuration - 0.05, newTime));
 
@@ -1776,6 +1972,78 @@ selectAllBtn.addEventListener('click', () => {
   updateSelectionUI();
 });
 
+// ─── Project save / load ────────────────────────────────────────────────────
+saveProjectBtn.addEventListener('click', () => {
+  if (!videoFile) return;
+
+  const project = {
+    version: 1,
+    videoFileName: videoFile.name,
+    splitPoints: splitPoints,
+    segmentNames: segmentNames,
+    excludedSegments: [...excludedSegments],
+    selectedSegments: [...selectedSegments],
+  };
+
+  const blob = new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = videoFile.name + '.moviecut.json';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+});
+
+loadProjectBtn.addEventListener('click', () => {
+  projectFileInput.click();
+});
+
+projectFileInput.addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  if (!videoFile) {
+    showToast('先に動画ファイルを読み込んでください', 'error');
+    projectFileInput.value = '';
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const data = JSON.parse(reader.result);
+      if (data.version !== 1) {
+        showToast('対応していないプロジェクトファイルです', 'error');
+        return;
+      }
+
+      splitPoints = data.splitPoints;
+      segmentNames = data.segmentNames;
+      excludedSegments = new Set(data.excludedSegments);
+      selectedSegments = new Set(data.selectedSegments);
+      infoSplits.textContent = splitPoints.length;
+
+      renderMarkers();
+      renderSegments();
+      renderTrackFills();
+      updateSelectionUI();
+      buildTimelineLabels();
+      showToast('プロジェクトを読み込みました');
+    } catch (err) {
+      showToast('プロジェクトの読み込みに失敗しました', 'error');
+    } finally {
+      projectFileInput.value = '';
+    }
+  };
+  reader.onerror = () => {
+    showToast('プロジェクトの読み込みに失敗しました', 'error');
+    projectFileInput.value = '';
+  };
+  reader.readAsText(file);
+});
+
 // ─── Keyboard shortcuts ──────────────────────────────────────────────────────
 document.addEventListener('keydown', (e) => {
   // Ignore when typing in an input
@@ -1794,11 +2062,11 @@ document.addEventListener('keydown', (e) => {
       break;
     case 'ArrowLeft':
       e.preventDefault();
-      videoEl.currentTime = Math.max(0, videoEl.currentTime - 0.1);
+      videoEl.currentTime = Math.max(0, videoEl.currentTime - (e.shiftKey ? 10 : 0.1));
       break;
     case 'ArrowRight':
       e.preventDefault();
-      videoEl.currentTime = Math.min(videoDuration, videoEl.currentTime + 0.1);
+      videoEl.currentTime = Math.min(videoDuration, videoEl.currentTime + (e.shiftKey ? 10 : 0.1));
       break;
     case 'KeyZ':
       e.preventDefault();
@@ -1917,8 +2185,10 @@ async function saveFile(blob, filename, segNum, silent = false) {
     try {
       const handle = await window.showSaveFilePicker({
         suggestedName: filename,
+        startIn: lastSavedFileHandle ?? 'downloads',
         types: [{ description: 'MP4 Video', accept: { 'video/mp4': ['.mp4'] } }],
       });
+      lastSavedFileHandle = handle;
       const writable = await handle.createWritable();
       await writable.write(blob);
       await writable.close();
