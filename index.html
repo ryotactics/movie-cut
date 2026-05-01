@@ -1099,7 +1099,7 @@ let selectedSegments = new Set();  // indices of selected segments
 let excludedSegments = new Set();  // indices excluded (will not be exported)
 let segmentPlayEnd = null;         // end time of currently previewing segment
 let segmentNames = {};             // index → custom name
-let lastSavedFileHandle = null;
+let savePickerStartIn = 'downloads';
 let zoomLevel = 1;                 // 1 = full view, higher = zoomed in
 let zoomStart = 0;                 // visible window start in seconds
 
@@ -2257,10 +2257,9 @@ async function saveFile(blob, filename, segNum, silent = false) {
     try {
       const handle = await window.showSaveFilePicker({
         suggestedName: filename,
-        startIn: lastSavedFileHandle ?? 'downloads',
+        startIn: savePickerStartIn,
         types: [{ description: 'MP4 Video', accept: { 'video/mp4': ['.mp4'] } }],
       });
-      lastSavedFileHandle = handle;
       const writable = await handle.createWritable();
       await writable.write(blob);
       await writable.close();
@@ -2305,7 +2304,7 @@ function showSaveToast(file, filename, segNum) {
 
   btn.addEventListener('click', async () => {
     try {
-      await navigator.share({ files: [file], title: filename });
+      await navigator.share({ files: [file] });
       el.remove();
     } catch (e) {
       if (e.name !== 'AbortError') showToast('保存に失敗しました', 'error');
