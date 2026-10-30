@@ -9,14 +9,14 @@
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {
-    "react": "latest",
-    "react-dom": "latest"
+    "react": "19.2.5",
+    "react-dom": "19.2.5"
   },
   "devDependencies": {
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "latest",
-    "typescript": "latest",
-    "vite": "latest"
+    "@vitejs/plugin-react": "6.0.1",
+    "typescript": "6.0.3",
+    "vite": "8.1.6"
   }
 }
